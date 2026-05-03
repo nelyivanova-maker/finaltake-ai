@@ -17,21 +17,19 @@ export async function POST(req: Request) {
 
     let text = "";
 
-    if (name.endsWith(".pdf")) {
-      // dynamic import to avoid build issues
-      const pdfParseModule = await import("pdf-parse");
-      const pdfParse = (pdfParseModule as any).default;
-
-      const data = await pdfParse(buffer);
-      text = data.text;
-
-    } else if (name.endsWith(".docx")) {
+    if (name.endsWith(".docx")) {
       const result = await mammoth.extractRawText({ buffer });
       text = result.value;
 
+    } else if (name.endsWith(".pdf")) {
+      return NextResponse.json(
+        { error: "PDF not supported yet. Please upload .docx or .txt." },
+        { status: 400 }
+      );
+
     } else if (name.endsWith(".doc")) {
       return NextResponse.json(
-        { error: "Please convert .doc files to .docx first." },
+        { error: "Please convert .doc to .docx." },
         { status: 400 }
       );
 
@@ -45,9 +43,7 @@ export async function POST(req: Request) {
     console.error("UPLOAD ERROR:", error);
 
     return NextResponse.json(
-      {
-        error: error?.message || "Failed to process file",
-      },
+      { error: error?.message || "Failed to process file" },
       { status: 500 }
     );
   }
