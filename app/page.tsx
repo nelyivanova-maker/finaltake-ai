@@ -64,7 +64,10 @@ function parseCues(text: string, roles: string[]) {
 export default function Page() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const animationRef = useRef<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const [script, setScript] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
@@ -74,6 +77,7 @@ export default function Page() {
 
   const [recording, setRecording] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
+  const [grayBackground, setGrayBackground] = useState(false);
 
   const [actorName, setActorName] = useState("");
   const [roleName, setRoleName] = useState("");
@@ -82,61 +86,158 @@ export default function Page() {
   const cues = parseCues(script, roles);
 
   async function read(text: string) {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+
     const res = await fetch("/api/tts", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({ text }),
     });
 
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
-    new Audio(url).play();
+    const audio = new Audio(url);
+
+    audioRef.current = audio;
+    audio.play();
   }
 
-  function start() {
-    const cue = cues[index];
-    if (cue?.role === voiceRole) read(cue.text);
+  function readIfVoice(lineIndex: number) {
+    const cue = cues[lineIndex];
+    if (cue?.role === voiceRole) {
+      read(cue.text);
+    }
   }
 
-  function next() {
+  function nextLine() {
     const nextIndex = Math.min(index + 1, cues.length - 1);
     setIndex(nextIndex);
 
     setTimeout(() => {
-      const cue = cues[nextIndex];
-      if (cue?.role === voiceRole) read(cue.text);
+      readIfVoice(nextIndex);
     }, 200);
+  }
+
+  function previousLine() {
+    const previousIndex = Math.max(index - 1, 0);
+    setIndex(previousIndex);
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+
+    setTimeout(() => {
+      readIfVoice(previousIndex);
+    }, 200);
+  }
+
+  function pauseVoice() {
+    audioRef.current?.pause();
+  }
+
+  function drawVideoToCanvas() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    if (!video || !canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const canvasW = canvas.width;
+    const canvasH = canvas.height;
+
+    ctx.fillStyle = grayBackground ? "#9ca3af" : "#000000";
+    ctx.fillRect(0, 0, canvasW, canvasH);
+
+    if (video.videoWidth && video.videoHeight) {
+      const scale = Math.min(
+        canvasW / video.videoWidth,
+        canvasH / video.videoHeight
+      );
+
+      const drawW = video.videoWidth * scale;
+      const drawH = video.videoHeight * scale;
+      const x = (canvasW - drawW) / 2;
+      const y = (canvasH - drawH) / 2;
+
+      ctx.drawImage(video, x, y, drawW, drawH);
+    }
+
+    animationRef.current = requestAnimationFrame(drawVideoToCanvas);
   }
 
   async function startRecording() {
     setRecording(true);
+    setVideoUrl("");
+    setIndex(0);
 
-    const stream = await navigator.mediaDevices.getUserMedia({
+    const cameraStream = await navigator.mediaDevices.getUserMedia({
       video: true,
       audio: true,
     });
 
-    if (videoRef.current) videoRef.current.srcObject = stream;
+    if (videoRef.current) {
+      videoRef.current.srcObject = cameraStream;
+      await videoRef.current.play();
+    }
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    canvas.width = 1280;
+    canvas.height = 720;
+
+    drawVideoToCanvas();
+
+    const canvasStream = canvas.captureStream(30);
+    const audioTracks = cameraStream.getAudioTracks();
+
+    const finalStream = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...audioTracks,
+    ]);
 
     const chunks: BlobPart[] = [];
-    const recorder = new MediaRecorder(stream);
+    const recorder = new MediaRecorder(finalStream);
 
-    recorder.ondataavailable = (e) => chunks.push(e.data);
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
 
     recorder.onstop = () => {
       const blob = new Blob(chunks, { type: "video/webm" });
       setVideoUrl(URL.createObjectURL(blob));
-      stream.getTracks().forEach((t) => t.stop());
+
+      cameraStream.getTracks().forEach((t) => t.stop());
+
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
     };
 
     recorderRef.current = recorder;
     recorder.start();
 
-    setTimeout(start, 400);
+    setTimeout(() => {
+      readIfVoice(0);
+    }, 500);
   }
 
   function stopRecording() {
     setRecording(false);
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+
     recorderRef.current?.stop();
   }
 
@@ -165,7 +266,6 @@ export default function Page() {
 
           const data = await res.json();
           const text = data.text || "";
-
           const found = extractRoles(text);
 
           setScript(text);
@@ -184,8 +284,13 @@ export default function Page() {
         value={script}
         onChange={(e) => {
           const text = e.target.value;
+          const found = extractRoles(text);
+
           setScript(text);
-          setRoles(extractRoles(text));
+          setRoles(found);
+          setMyRole(found[0] || "");
+          setVoiceRole(found[1] || found[0] || "");
+          setIndex(0);
         }}
         style={{ width: "100%", height: 200, marginTop: 10 }}
       />
@@ -196,7 +301,9 @@ export default function Page() {
         <label>Your role: </label>
         <select value={myRole} onChange={(e) => setMyRole(e.target.value)}>
           {roles.map((r) => (
-            <option key={r}>{r}</option>
+            <option key={r} value={r}>
+              {r}
+            </option>
           ))}
         </select>
       </div>
@@ -207,7 +314,9 @@ export default function Page() {
           {roles
             .filter((r) => r !== myRole)
             .map((r) => (
-              <option key={r}>{r}</option>
+              <option key={r} value={r}>
+                {r}
+              </option>
             ))}
         </select>
       </div>
@@ -227,6 +336,7 @@ export default function Page() {
                     ? "#166534"
                     : "#1d4ed8"
                   : "#333",
+              border: i === index ? "3px solid white" : "none",
             }}
           >
             <strong>{cue.role}</strong>
@@ -237,42 +347,87 @@ export default function Page() {
 
       <h2>4. Controls</h2>
 
-      <button onClick={start}>Start</button>
-      <button onClick={() => speechSynthesis.pause()} style={{ marginLeft: 10 }}>
+      <button onClick={previousLine}>Previous line</button>
+
+      <button onClick={pauseVoice} style={{ marginLeft: 10 }}>
         Pause
       </button>
-      <button onClick={() => speechSynthesis.cancel()} style={{ marginLeft: 10 }}>
-        Stop
-      </button>
-      <button onClick={next} style={{ marginLeft: 10 }}>
+
+      <button onClick={nextLine} style={{ marginLeft: 10 }}>
         Next line
       </button>
 
       <h2>Recording details</h2>
 
-      <input placeholder="Your Name" value={actorName} onChange={(e) => setActorName(e.target.value)} />
-      <input placeholder="Role Name" value={roleName} onChange={(e) => setRoleName(e.target.value)} style={{ marginLeft: 10 }} />
-      <input placeholder="Agency" value={agency} onChange={(e) => setAgency(e.target.value)} style={{ marginLeft: 10 }} />
+      <input
+        placeholder="Your Name"
+        value={actorName}
+        onChange={(e) => setActorName(e.target.value)}
+      />
+
+      <input
+        placeholder="Role Name"
+        value={roleName}
+        onChange={(e) => setRoleName(e.target.value)}
+        style={{ marginLeft: 10 }}
+      />
+
+      <input
+        placeholder="Agency"
+        value={agency}
+        onChange={(e) => setAgency(e.target.value)}
+        style={{ marginLeft: 10 }}
+      />
 
       <h2>5. Record</h2>
 
-      <div style={{ background: "#9ca3af", padding: 20, borderRadius: 10 }}>
-        <video ref={videoRef} autoPlay muted style={{ width: 320 }} />
+      <label>
+        <input
+          type="checkbox"
+          checked={grayBackground}
+          onChange={(e) => setGrayBackground(e.target.checked)}
+        />{" "}
+        Add gray background to video
+      </label>
+
+      <div style={{ marginTop: 10 }}>
+        <video
+          ref={videoRef}
+          autoPlay
+          muted
+          playsInline
+          style={{
+            width: 320,
+            background: grayBackground ? "#9ca3af" : "#000",
+          }}
+        />
       </div>
 
+      <canvas ref={canvasRef} style={{ display: "none" }} />
+
+      <br />
+
       {!recording ? (
-        <button onClick={startRecording}>Start Recording</button>
+        <button onClick={startRecording}>Start Video</button>
       ) : (
-        <button onClick={stopRecording}>Stop Recording</button>
+        <button onClick={stopRecording}>Stop Video</button>
       )}
 
       {videoUrl && (
-        <a
-          href={videoUrl}
-          download={`${(actorName || "actor").replace(/\s+/g, "_")}_${(roleName || myRole).replace(/\s+/g, "_")}_${(agency || "agency").replace(/\s+/g, "_")}.webm`}
-        >
-          Download Video
-        </a>
+        <p>
+          <a
+            href={videoUrl}
+            download={`${(actorName || "actor").replace(/\s+/g, "_")}_${(
+              roleName || myRole
+            ).replace(/\s+/g, "_")}_${(agency || "agency").replace(
+              /\s+/g,
+              "_"
+            )}.webm`}
+            style={{ color: "#fff" }}
+          >
+            Download Video
+          </a>
+        </p>
       )}
     </main>
   );
