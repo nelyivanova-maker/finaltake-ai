@@ -4,43 +4,33 @@ export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const { script, myRole } = await req.json();
 
-    const script = body?.script || "";
-    const myRole = body?.myRole || "Actor";
-
-    if (!script.trim()) {
-      return NextResponse.json(
-        { error: "No script provided" },
-        { status: 400 }
-      );
+    if (!script) {
+      return NextResponse.json({ error: "No script provided" }, { status: 400 });
     }
 
-    // SIMPLE SAFE ANALYSIS (no external API yet)
     const analysis = `
 TONE:
-This scene appears tense and emotionally driven.
+This scene is tense and emotionally charged.
 
-YOUR ROLE (${myRole}):
-Play with intention. Focus on reacting truthfully to the other character. Avoid rushing the lines.
+YOUR ROLE (${myRole || "selected role"}):
+Play it truthfully. Listen, react, and let the emotion build naturally.
 
 SUBTEXT:
-There is underlying conflict or fear beneath the dialogue. The characters are not fully saying what they feel.
+There is fear, pressure, or conflict under the words.
 
 PACING:
-Start controlled and grounded. Let intensity build gradually.
+Do not rush. Let key moments breathe.
 
 KEY MOMENTS:
-- Emotional shifts in dialogue
-- Confrontation lines
-- Reactions to other characters
+- First emotional shift
+- Any accusation or threat
+- Final reaction
 `;
 
     return NextResponse.json({ analysis });
-
   } catch (error: any) {
-    console.error("ANALYZE ERROR:", error);
-
     return NextResponse.json(
       { error: error?.message || "Failed to analyze script" },
       { status: 500 }
