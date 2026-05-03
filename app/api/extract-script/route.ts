@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
 
 export async function POST(req: Request) {
   const formData = await req.formData();
@@ -15,22 +14,20 @@ export async function POST(req: Request) {
 
   let text = "";
 
-  if (name.endsWith(".pdf")) {
-    const parser = new PDFParse({ data: buffer });
-    const data = await parser.getText();
-    text = data.text;
-    await parser.destroy();
-  } else if (name.endsWith(".docx")) {
-    const data = await mammoth.extractRawText({ buffer });
-    text = data.value;
-  } else if (name.endsWith(".doc")) {
-    return NextResponse.json(
-      { error: "Old .doc files are not supported yet. Please save as .docx." },
-      { status: 400 }
-    );
-  } else {
-    text = buffer.toString("utf-8");
-  }
+  try {
+    if (name.endsWith(".docx")) {
+      const result = await mammoth.extractRawText({ buffer });
+      text = result.value;
+    } else {
+      text = buffer.toString("utf-8");
+    }
 
-  return NextResponse.json({ text });
+    return NextResponse.json({ text });
+  } catch (e) {
+    console.error(e);
+    return NextResponse.json(
+      { error: "Failed to process file" },
+      { status: 500 }
+    );
+  }
 }
