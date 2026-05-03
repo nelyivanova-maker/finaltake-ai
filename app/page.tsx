@@ -7,12 +7,13 @@ type Cue = {
   text: string;
 };
 
-function cleanRole(line: string) {
+function cleanRoleName(line: string) {
   return line
     .replace(/\(CONT'D\)/gi, "")
     .replace(/\(CONT’D\)/gi, "")
     .replace(/\(O\.C\.\)/gi, "")
     .replace(/\(V\.O\.\)/gi, "")
+    .replace(/:$/, "")
     .trim()
     .toUpperCase();
 }
@@ -21,30 +22,33 @@ function extractRoles(text: string) {
   const ignore = new Set([
     "INT", "EXT", "SCENE", "CUT", "TO", "FADE", "IN", "OUT",
     "DISSOLVE", "BEAT", "DAY", "NIGHT", "EVENING", "MORNING",
-    "DUSK", "DAWN", "SCREAMS", "MOVE", "LET", "GO",
+    "DUSK", "DAWN", "SCREAMS", "MOVE", "LET", "GO", "THE",
+    "AND", "BUT", "DON", "OFF", "CONTINUED", "CONT"
   ]);
 
   const roles = new Set<string>();
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = cleanRole(lines[i]);
-    const nextLine = lines[i + 1] || "";
+  for (const rawLine of lines) {
+    const cleaned = cleanRoleName(rawLine);
 
+    // Character alone on a line: EVIE / SUSANNAH / PAUL
     if (
-      /^[A-Z][A-Z '’.-]{1,35}$/.test(line) &&
-      !ignore.has(line) &&
-      !line.startsWith("INT.") &&
-      !line.startsWith("EXT.") &&
-      !line.match(/^SCENE\s+\d+/i) &&
-      nextLine.length > 0
+      /^[A-Z][A-Z0-9 '’.-]{1,35}$/.test(cleaned) &&
+      !ignore.has(cleaned) &&
+      !cleaned.startsWith("INT.") &&
+      !cleaned.startsWith("EXT.") &&
+      !cleaned.match(/^SCENE\s+\d+/i) &&
+      cleaned.split(" ").length <= 3
     ) {
-      roles.add(line);
+      roles.add(cleaned);
     }
 
-    const colon = line.match(/^([A-Z][A-Z0-9 '’.-]{1,35}):/);
-    if (colon && !ignore.has(colon[1])) {
-      roles.add(colon[1]);
+    // Character with colon: Dad: Hello
+    const colon = rawLine.match(/^([A-Za-z][A-Za-z0-9 '’.-]{1,35}):/);
+    if (colon) {
+      const name = colon[1].trim().toUpperCase();
+      if (!ignore.has(name)) roles.add(name);
     }
   }
 
@@ -60,15 +64,12 @@ function parseCues(text: string, roles: string[]) {
 
   function saveCue() {
     if (currentRole && buffer.length) {
-      cues.push({
-        role: currentRole,
-        text: buffer.join(" "),
-      });
+      cues.push({ role: currentRole, text: buffer.join(" ") });
     }
   }
 
-  for (const raw of lines) {
-    const cleaned = cleanRole(raw);
+  for (const rawLine of lines) {
+    const cleaned = cleanRoleName(rawLine);
 
     if (roles.includes(cleaned)) {
       saveCue();
@@ -77,15 +78,15 @@ function parseCues(text: string, roles: string[]) {
       continue;
     }
 
-    const colon = raw.match(/^([A-Za-z][A-Za-z0-9 '’.-]{1,35}):\s*(.*)$/);
+    const colon = rawLine.match(/^([A-Za-z][A-Za-z0-9 '’.-]{1,35}):\s*(.*)$/);
     if (colon) {
       saveCue();
-      currentRole = colon[1].toUpperCase();
+      currentRole = colon[1].trim().toUpperCase();
       buffer = [colon[2]];
       continue;
     }
 
-    if (currentRole) buffer.push(raw);
+    if (currentRole) buffer.push(rawLine);
   }
 
   saveCue();
@@ -120,25 +121,7 @@ export default function Page() {
 
   const cues = parseCues(script, roles);
 
-  async function loadScriptFile(file: File) {
-    setStatus("Loading script...");
-
-    const formData = new FormData();
-    formData.append("file", file);
-
-    const res = await fetch("/api/extract-script", {
-      method: "POST",
-      body: formData,
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      setStatus(data.error || "Script failed to load.");
-      return;
-    }
-
-    const text = data.text || "";
+  function applyScript(text: string) {
     const foundRoles = extractRoles(text);
 
     setScript(text);
@@ -148,28 +131,87 @@ export default function Page() {
     setExtraRole1("");
     setExtraRole2("");
     setIndex(0);
-    setStatus("Script loaded.");
+  }
+
+  function resetAll() {
+    setScript("");
+    setRoles([]);
+    setMyRole("");
+    setVoiceRole("");
+    setExtraRole1("");
+    setExtraRole2("");
+    setAnalysis("");
+    setStatus("");
+    setIndex(0);
+    setVideoUrl("");
+    setActorName("");
+    setRoleName("");
+    setAgency("");
+  }
+
+  async function loadScriptFile(file: File) {
+    setStatus("Loading script...");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/extract-script", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setStatus(data.error || "Script failed to load.");
+        return;
+      }
+
+      applyScript(data.text || "");
+      setStatus("Script loaded.");
+    } catch (error: any) {
+      setStatus(error?.message || "Script failed to load.");
+    }
   }
 
   async function analyzeScript() {
+    if (!script.trim()) {
+      setAnalysis("Please load or paste a script first.");
+      return;
+    }
+
     setAnalysis("Analyzing script...");
 
-    const res = await fetch("/api/analyze-script", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        script,
-        myRole,
-        voiceRole,
-        extraRole1,
-        extraRole2,
-      }),
-    });
+    try {
+      const res = await fetch("/api/analyze-script", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          script,
+          myRole,
+          voiceRole,
+          extraRole1,
+          extraRole2,
+        }),
+      });
 
-    const data = await res.json();
-    setAnalysis(data.analysis || data.error || "No analysis returned.");
+      const text = await res.text();
+
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        setAnalysis(text || "Analysis failed. API did not return JSON.");
+        return;
+      }
+
+      setAnalysis(data.analysis || data.error || "No analysis returned.");
+    } catch (error: any) {
+      setAnalysis(error?.message || "Analysis failed.");
+    }
   }
 
   async function read(text: string) {
@@ -189,6 +231,7 @@ export default function Page() {
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
+
     audioRef.current = audio;
     audio.play();
   }
@@ -306,7 +349,7 @@ export default function Page() {
   return (
     <main
       style={{
-        background: "#000",
+        background: "#064e3b",
         color: "#fff",
         minHeight: "100vh",
         padding: 24,
@@ -316,7 +359,6 @@ export default function Page() {
       <h1>🎬 FinalTake AI</h1>
 
       <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-        {/* SECTION 1 */}
         <section
           style={{
             flex: "1 1 420px",
@@ -360,20 +402,15 @@ export default function Page() {
             Load Script
           </button>
 
+          <button onClick={resetAll} style={{ marginLeft: 10 }}>
+            Reset
+          </button>
+
           {status && <p>{status}</p>}
 
           <textarea
             value={script}
-            onChange={(e) => {
-              const text = e.target.value;
-              const foundRoles = extractRoles(text);
-
-              setScript(text);
-              setRoles(foundRoles);
-              setMyRole(foundRoles[0] || "");
-              setVoiceRole(foundRoles[1] || foundRoles[0] || "");
-              setIndex(0);
-            }}
+            onChange={(e) => applyScript(e.target.value)}
             placeholder="Upload or paste your script here..."
             style={{
               width: "100%",
@@ -386,10 +423,18 @@ export default function Page() {
 
           <h3>Detected roles</h3>
 
+          <p>
+            {roles.length > 0
+              ? roles.join(", ")
+              : "No roles detected yet."}
+          </p>
+
           <label>Your role: </label>
           <select value={myRole} onChange={(e) => setMyRole(e.target.value)}>
             {roles.map((r) => (
-              <option key={r} value={r}>{r}</option>
+              <option key={r} value={r}>
+                {r}
+              </option>
             ))}
           </select>
 
@@ -397,9 +442,13 @@ export default function Page() {
 
           <label>Voice reads: </label>
           <select value={voiceRole} onChange={(e) => setVoiceRole(e.target.value)}>
-            {roles.filter((r) => r !== myRole).map((r) => (
-              <option key={r} value={r}>{r}</option>
-            ))}
+            {roles
+              .filter((r) => r !== myRole)
+              .map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
           </select>
 
           <br /><br />
@@ -408,7 +457,9 @@ export default function Page() {
           <select value={extraRole1} onChange={(e) => setExtraRole1(e.target.value)}>
             <option value="">None</option>
             {roles.map((r) => (
-              <option key={r} value={r}>{r}</option>
+              <option key={r} value={r}>
+                {r}
+              </option>
             ))}
           </select>
 
@@ -418,13 +469,17 @@ export default function Page() {
           <select value={extraRole2} onChange={(e) => setExtraRole2(e.target.value)}>
             <option value="">None</option>
             {roles.map((r) => (
-              <option key={r} value={r}>{r}</option>
+              <option key={r} value={r}>
+                {r}
+              </option>
             ))}
           </select>
 
           <br /><br />
 
-          <button onClick={analyzeScript}>Analyze Script with AI</button>
+          <button onClick={analyzeScript}>
+            Analyze Script with AI
+          </button>
 
           <h3>AI Analysis</h3>
 
@@ -442,7 +497,6 @@ export default function Page() {
           />
         </section>
 
-        {/* SECTION 2 */}
         <section
           style={{
             flex: "1 1 420px",
@@ -479,6 +533,8 @@ export default function Page() {
               borderRadius: 12,
             }}
           >
+            {cues.length === 0 && <p>No dialogue loaded yet.</p>}
+
             {cues.map((cue, i) => (
               <div
                 key={i}
@@ -504,8 +560,12 @@ export default function Page() {
           <br />
 
           <button onClick={previousLine}>Previous line</button>
-          <button onClick={pauseVoice} style={{ marginLeft: 10 }}>Pause</button>
-          <button onClick={nextLine} style={{ marginLeft: 10 }}>Next line</button>
+          <button onClick={pauseVoice} style={{ marginLeft: 10 }}>
+            Pause
+          </button>
+          <button onClick={nextLine} style={{ marginLeft: 10 }}>
+            Next line
+          </button>
 
           <h3>Recording details</h3>
 
