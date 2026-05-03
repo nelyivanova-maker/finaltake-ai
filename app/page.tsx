@@ -2,15 +2,22 @@
 
 import { useState } from "react";
 
+function extractRoles(text: string) {
+  const matches = text.match(/^([A-Z][A-Z0-9 '’-]{1,40}):/gm) || [];
+  return Array.from(
+    new Set(matches.map((line) => line.replace(":", "").trim()))
+  );
+}
+
 export default function Page() {
-  const [script, setScript] = useState(
-`MUM: In a minute.
+  const defaultScript = `MUM: In a minute.
 DAUGHTER: Mum? I'm really hungry.
 MUM: I said, in a minute.
 DAUGHTER: Mum?
-MUM: I SAID IN A MINUTE!`
-  );
+MUM: I SAID IN A MINUTE!`;
 
+  const [script, setScript] = useState(defaultScript);
+  const [roles, setRoles] = useState<string[]>(extractRoles(defaultScript));
   const [role, setRole] = useState("DAUGHTER");
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -32,7 +39,12 @@ MUM: I SAID IN A MINUTE!`
       return;
     }
 
-    setScript(data.text);
+    const newScript = data.text || "";
+    const newRoles = extractRoles(newScript);
+
+    setScript(newScript);
+    setRoles(newRoles);
+    setRole(newRoles[0] || "");
   }
 
   return (
@@ -40,7 +52,6 @@ MUM: I SAID IN A MINUTE!`
       <h1>🎬 FinalTake AI</h1>
       <p>Real AI reader voice for the non-chosen role.</p>
 
-      {/* 1. SCRIPT */}
       <h2>1. Script</h2>
 
       <input
@@ -51,7 +62,17 @@ MUM: I SAID IN A MINUTE!`
 
       <textarea
         value={script}
-        onChange={(e) => setScript(e.target.value)}
+        onChange={(e) => {
+          const newScript = e.target.value;
+          const newRoles = extractRoles(newScript);
+
+          setScript(newScript);
+          setRoles(newRoles);
+
+          if (!newRoles.includes(role)) {
+            setRole(newRoles[0] || "");
+          }
+        }}
         style={{
           width: "100%",
           height: "200px",
@@ -60,39 +81,40 @@ MUM: I SAID IN A MINUTE!`
         }}
       />
 
-      {/* 2. ROLE */}
       <h2>2. Choose your role</h2>
+
       <select value={role} onChange={(e) => setRole(e.target.value)}>
-        <option>DAUGHTER</option>
-        <option>MUM</option>
+        {roles.length > 0 ? (
+          roles.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))
+        ) : (
+          <option>No roles found</option>
+        )}
       </select>
 
-      {/* 3. VOICE */}
       <h2>3. AI Reader Voice</h2>
       <select>
         <option>Soft Female / Mum</option>
         <option>Neutral</option>
       </select>
 
-      {/* 4. DETAILS */}
       <h2>4. Recording details</h2>
       <input placeholder="Your Name" />
       <input placeholder="Role Name" />
       <input placeholder="Agency" />
 
-      {/* PREVIEW */}
       <div style={{ background: "#1e2a3a", padding: "20px", marginTop: "20px" }}>
-        <h3>{role}</h3>
-        <p>{script.split("\n")[0]}</p>
+        <h3>{role || "No role selected"}</h3>
+        <p>{script.split("\n").find((line) => line.startsWith(role + ":")) || ""}</p>
       </div>
 
-      {/* 5. RECORD */}
       <h2>5. Record</h2>
       <div style={{ background: "#667085", height: "120px", borderRadius: "10px" }} />
 
-      <button style={{ marginTop: "10px" }}>
-        Start Recording
-      </button>
+      <button style={{ marginTop: "10px" }}>Start Recording</button>
     </main>
   );
 }
