@@ -2,12 +2,12 @@
 
 import { useState, useEffect, useRef } from "react";
 
-/* -------- ROLE DETECTION -------- */
+/* -------- ROLE DETECTION (FIXED) -------- */
 function extractRoles(text: string) {
   const ignoreWords = new Set([
-    "INT","EXT","SCENE","CONTINUED","CONT","CUT","TO","FADE","OUT","IN",
-    "DISSOLVE","BEAT","DAY","NIGHT","EVENING","MORNING","DUSK","DAWN",
-    "THE","AND","BUT","DON","LET","OFF"
+    "INT","EXT","SCENE","CUT","TO","FADE","IN","OUT",
+    "DISSOLVE","BEAT","DAY","NIGHT","EVENING","MORNING",
+    "DUSK","DAWN","SCREAMS","MOVE","LET","GO"
   ]);
 
   const roles = new Set<string>();
@@ -17,37 +17,30 @@ function extractRoles(text: string) {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  for (const rawLine of lines) {
-    const line = rawLine
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i]
       .replace(/\(CONT'D\)/gi, "")
       .replace(/\(CONT’D\)/gi, "")
       .replace(/\(O\.C\.\)/gi, "")
       .replace(/\(V\.O\.\)/gi, "")
       .trim();
 
-    // 1. Detect "EVIE:" or "Dad:"
-    const colonMatch = line.match(/^([A-Za-z][A-Za-z0-9 '’.-]{1,35}):/);
-    if (colonMatch) {
-      roles.add(colonMatch[1].trim());
-    }
+    const nextLine = lines[i + 1] || "";
 
-    // 2. Detect standalone names
+    // ✅ Character line (EVIE, SUSANNAH)
     if (
-      /^[A-Za-z][A-Za-z0-9 '’.-]{1,35}$/.test(line) &&
-      !ignoreWords.has(line.toUpperCase()) &&
-      !line.startsWith("INT.") &&
-      !line.startsWith("EXT.") &&
-      !line.match(/^SCENE\s+\d+/i)
+      /^[A-Z]{2,}$/.test(line) &&
+      !ignoreWords.has(line) &&
+      nextLine.length > 0 &&
+      !nextLine.match(/^[A-Z\s]+$/)
     ) {
       roles.add(line);
     }
 
-    // 3. Detect uppercase names inside lines (EVIE, CASSIE etc)
-    const uppercaseMatches = line.match(/\b[A-Z][A-Z]{2,}\b/g) || [];
-    for (const name of uppercaseMatches) {
-      if (!ignoreWords.has(name)) {
-        roles.add(name);
-      }
+    // ✅ Character with colon (Dad:, Mum:)
+    const colonMatch = line.match(/^([A-Za-z][A-Za-z0-9 '’.-]{1,35}):/);
+    if (colonMatch) {
+      roles.add(colonMatch[1].toUpperCase());
     }
   }
 
