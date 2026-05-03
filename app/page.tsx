@@ -5,37 +5,57 @@ import { useState } from "react";
 export default function Page() {
   const [file, setFile] = useState<File | null>(null);
 
-  const handleUpload = async () => {
-    if (!file) return;
+  async function handleUpload() {
+    if (!file) {
+      alert("Please choose a file first.");
+      return;
+    }
 
     const formData = new FormData();
     formData.append("file", file);
 
-    const res = await fetch("/api/extract-script", {
+    const response = await fetch("/api/extract-script", {
       method: "POST",
       body: formData,
     });
 
-    const data = await res.json();
+    if (!response.ok) {
+      alert("Upload failed.");
+      return;
+    }
+
+    const data = await response.json();
     console.log(data);
-    alert("Uploaded! Check console.");
-  };
+    alert("File uploaded successfully.");
+  }
 
   return (
-    <main style={{ padding: "40px" }}>
-      <h1>Upload Script</h1>
+    <main>
+      {/* keep your previous page content here */}
 
-      <input
-        type="file"
-        accept=".pdf"
-        onChange={(e) => setFile(e.target.files?.[0] || null)}
-      />
+      <section style={{ marginTop: "40px" }}>
+        <h2>Upload your script</h2>
+        <p>Upload a PDF or Word document.</p>
 
-      <br /><br />
+        <input
+          type="file"
+          accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+        />
 
-      <button onClick={handleUpload}>
-        Upload PDF
-      </button>
+        <br />
+        <br />
+
+        <button onClick={handleUpload}>
+          Upload Script
+        </button>
+
+        {file && (
+          <p>
+            Selected file: <strong>{file.name}</strong>
+          </p>
+        )}
+      </section>
     </main>
   );
 }
