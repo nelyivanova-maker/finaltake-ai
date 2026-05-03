@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
 
 export async function POST(req: Request) {
   try {
@@ -17,6 +16,9 @@ export async function POST(req: Request) {
     let text = "";
 
     if (name.endsWith(".pdf")) {
+      const pdfParseModule = await import("pdf-parse");
+      const PDFParse = pdfParseModule.PDFParse;
+
       const parser = new PDFParse({ data: buffer });
       const result = await parser.getText();
       text = result.text;
@@ -35,9 +37,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ text });
   } catch (error) {
-    console.error(error);
+    console.error("UPLOAD ERROR:", error);
+
     return NextResponse.json(
-      { error: "Failed to process file" },
+      { error: "Failed to process file. Check server console." },
       { status: 500 }
     );
   }
