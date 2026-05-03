@@ -7,29 +7,33 @@ export async function POST(req: Request) {
     const { script, myRole } = await req.json();
 
     if (!script) {
-      return NextResponse.json({ error: "No script provided" }, { status: 400 });
+      return NextResponse.json(
+        { error: "No script provided" },
+        { status: 400 }
+      );
     }
 
     const analysis = `
 TONE:
-This scene is tense and emotionally charged.
+This scene is emotionally tense and layered.
 
 YOUR ROLE (${myRole || "selected role"}):
-Play it truthfully. Listen, react, and let the emotion build naturally.
+Play with intention. Listen and react truthfully. Let the emotion build naturally.
 
 SUBTEXT:
-There is fear, pressure, or conflict under the words.
+There is pressure and unspoken conflict beneath the dialogue.
 
 PACING:
 Do not rush. Let key moments breathe.
 
 KEY MOMENTS:
-- First emotional shift
-- Any accusation or threat
-- Final reaction
+- Emotional shifts
+- Confrontation lines
+- Reactions to other characters
 `;
 
     return NextResponse.json({ analysis });
+
   } catch (error: any) {
     return NextResponse.json(
       { error: error?.message || "Failed to analyze script" },
