@@ -7,6 +7,7 @@ type Cue = {
   text: string;
 };
 
+/* ---------- ROLE DETECTION ---------- */
 function extractRoles(text: string) {
   const roles = new Set<string>();
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -23,6 +24,7 @@ function extractRoles(text: string) {
   return Array.from(roles);
 }
 
+/* ---------- SCRIPT PARSER ---------- */
 function parseCues(text: string, roles: string[]) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   const cues: Cue[] = [];
@@ -73,11 +75,16 @@ export default function Page() {
   const [roles, setRoles] = useState<string[]>([]);
   const [myRole, setMyRole] = useState("");
   const [voiceRole, setVoiceRole] = useState("");
+  const [extraRole1, setExtraRole1] = useState("");
+  const [extraRole2, setExtraRole2] = useState("");
+
+  const [analysis, setAnalysis] = useState("");
+
   const [index, setIndex] = useState(0);
 
+  const [grayBackground, setGrayBackground] = useState(false);
   const [recording, setRecording] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
-  const [grayBackground, setGrayBackground] = useState(false);
 
   const [actorName, setActorName] = useState("");
   const [roleName, setRoleName] = useState("");
@@ -85,6 +92,7 @@ export default function Page() {
 
   const cues = parseCues(script, roles);
 
+  /* ---------- VOICE ---------- */
   async function read(text: string) {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -107,41 +115,31 @@ export default function Page() {
     audio.play();
   }
 
-  function readIfVoice(lineIndex: number) {
-    const cue = cues[lineIndex];
-    if (cue?.role === voiceRole) {
-      read(cue.text);
-    }
+  function readIfVoice(i: number) {
+    const cue = cues[i];
+    if (cue?.role === voiceRole) read(cue.text);
   }
 
   function nextLine() {
-    const nextIndex = Math.min(index + 1, cues.length - 1);
-    setIndex(nextIndex);
+    const next = Math.min(index + 1, cues.length - 1);
+    setIndex(next);
 
-    setTimeout(() => {
-      readIfVoice(nextIndex);
-    }, 200);
+    setTimeout(() => readIfVoice(next), 200);
   }
 
   function previousLine() {
-    const previousIndex = Math.max(index - 1, 0);
-    setIndex(previousIndex);
+    const prev = Math.max(index - 1, 0);
+    setIndex(prev);
 
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
-
-    setTimeout(() => {
-      readIfVoice(previousIndex);
-    }, 200);
+    setTimeout(() => readIfVoice(prev), 200);
   }
 
   function pauseVoice() {
     audioRef.current?.pause();
   }
 
-  function drawVideoToCanvas() {
+  /* ---------- VIDEO ---------- */
+  function draw() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
@@ -150,27 +148,12 @@ export default function Page() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const canvasW = canvas.width;
-    const canvasH = canvas.height;
+    ctx.fillStyle = grayBackground ? "#9ca3af" : "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    ctx.fillStyle = grayBackground ? "#9ca3af" : "#000000";
-    ctx.fillRect(0, 0, canvasW, canvasH);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    if (video.videoWidth && video.videoHeight) {
-      const scale = Math.min(
-        canvasW / video.videoWidth,
-        canvasH / video.videoHeight
-      );
-
-      const drawW = video.videoWidth * scale;
-      const drawH = video.videoHeight * scale;
-      const x = (canvasW - drawW) / 2;
-      const y = (canvasH - drawH) / 2;
-
-      ctx.drawImage(video, x, y, drawW, drawH);
-    }
-
-    animationRef.current = requestAnimationFrame(drawVideoToCanvas);
+    animationRef.current = requestAnimationFrame(draw);
   }
 
   async function startRecording() {
@@ -178,74 +161,78 @@ export default function Page() {
     setVideoUrl("");
     setIndex(0);
 
-    const cameraStream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       video: true,
       audio: true,
     });
 
     if (videoRef.current) {
-      videoRef.current.srcObject = cameraStream;
+      videoRef.current.srcObject = stream;
       await videoRef.current.play();
     }
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
+    const canvas = canvasRef.current!;
     canvas.width = 1280;
     canvas.height = 720;
 
-    drawVideoToCanvas();
+    draw();
 
     const canvasStream = canvas.captureStream(30);
-    const audioTracks = cameraStream.getAudioTracks();
-
     const finalStream = new MediaStream([
       ...canvasStream.getVideoTracks(),
-      ...audioTracks,
+      ...stream.getAudioTracks(),
     ]);
 
     const chunks: BlobPart[] = [];
     const recorder = new MediaRecorder(finalStream);
 
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunks.push(e.data);
-    };
+    recorder.ondataavailable = (e) => chunks.push(e.data);
 
     recorder.onstop = () => {
       const blob = new Blob(chunks, { type: "video/webm" });
       setVideoUrl(URL.createObjectURL(blob));
 
-      cameraStream.getTracks().forEach((t) => t.stop());
-
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
+      stream.getTracks().forEach((t) => t.stop());
+      cancelAnimationFrame(animationRef.current!);
     };
 
     recorderRef.current = recorder;
     recorder.start();
 
-    setTimeout(() => {
-      readIfVoice(0);
-    }, 500);
+    setTimeout(() => readIfVoice(0), 500);
   }
 
   function stopRecording() {
     setRecording(false);
-
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
-
     recorderRef.current?.stop();
+  }
+
+  /* ---------- AI ANALYSIS ---------- */
+  async function analyzeScript() {
+    const res = await fetch("/api/analyze-script", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        script,
+        myRole,
+        voiceRole,
+        extraRole1,
+        extraRole2,
+      }),
+    });
+
+    const data = await res.json();
+    setAnalysis(data.analysis || "No analysis.");
   }
 
   return (
     <main style={{ background: "#000", color: "#fff", padding: 20 }}>
       <h1>FinalTake AI</h1>
 
-      <h2>1. Script</h2>
+      {/* ---------- SECTION 1 ---------- */}
+      <h2>1. Analyze Script</h2>
 
       <input
         ref={fileInputRef}
@@ -272,7 +259,6 @@ export default function Page() {
           setRoles(found);
           setMyRole(found[0] || "");
           setVoiceRole(found[1] || found[0] || "");
-          setIndex(0);
         }}
       />
 
@@ -285,58 +271,71 @@ export default function Page() {
         onChange={(e) => {
           const text = e.target.value;
           const found = extractRoles(text);
-
           setScript(text);
           setRoles(found);
-          setMyRole(found[0] || "");
-          setVoiceRole(found[1] || found[0] || "");
-          setIndex(0);
         }}
         style={{ width: "100%", height: 200, marginTop: 10 }}
       />
 
-      <h2>2. Choose roles</h2>
+      <br /><br />
 
-      <div>
-        <label>Your role: </label>
-        <select value={myRole} onChange={(e) => setMyRole(e.target.value)}>
-          {roles.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-      </div>
+      <label>Your role: </label>
+      <select value={myRole} onChange={(e) => setMyRole(e.target.value)}>
+        {roles.map((r) => <option key={r}>{r}</option>)}
+      </select>
 
-      <div style={{ marginTop: 10 }}>
-        <label>Voice reads: </label>
-        <select value={voiceRole} onChange={(e) => setVoiceRole(e.target.value)}>
-          {roles
-            .filter((r) => r !== myRole)
-            .map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-        </select>
-      </div>
+      <br /><br />
 
-      <h2>3. Reading</h2>
+      <label>Voice reads: </label>
+      <select value={voiceRole} onChange={(e) => setVoiceRole(e.target.value)}>
+        {roles.filter((r) => r !== myRole).map((r) => (
+          <option key={r}>{r}</option>
+        ))}
+      </select>
 
-      <div style={{ height: 300, overflowY: "auto", background: "#111", padding: 10 }}>
+      <br /><br />
+
+      <label>Extra role 1: </label>
+      <select value={extraRole1} onChange={(e) => setExtraRole1(e.target.value)}>
+        <option value="">None</option>
+        {roles.map((r) => <option key={r}>{r}</option>)}
+      </select>
+
+      <br /><br />
+
+      <label>Extra role 2: </label>
+      <select value={extraRole2} onChange={(e) => setExtraRole2(e.target.value)}>
+        <option value="">None</option>
+        {roles.map((r) => <option key={r}>{r}</option>)}
+      </select>
+
+      <br /><br />
+
+      <button onClick={analyzeScript}>Analyze Script with AI</button>
+
+      {analysis && (
+        <div style={{ background: "#1f2937", padding: 20, marginTop: 20 }}>
+          <h3>AI Analysis</h3>
+          <pre style={{ whiteSpace: "pre-wrap" }}>{analysis}</pre>
+        </div>
+      )}
+
+      {/* ---------- SECTION 2 ---------- */}
+      <h2>2. Create Video</h2>
+
+      <div style={{ height: 250, overflowY: "auto", background: "#111", padding: 10 }}>
         {cues.map((cue, i) => (
           <div
             key={i}
             style={{
-              marginBottom: 10,
               padding: 10,
+              marginBottom: 8,
               background:
                 i === index
                   ? cue.role === myRole
                     ? "#166534"
                     : "#1d4ed8"
                   : "#333",
-              border: i === index ? "3px solid white" : "none",
             }}
           >
             <strong>{cue.role}</strong>
@@ -345,65 +344,27 @@ export default function Page() {
         ))}
       </div>
 
-      <h2>4. Controls</h2>
+      <br />
 
-      <button onClick={previousLine}>Previous line</button>
+      <button onClick={previousLine}>Previous</button>
+      <button onClick={pauseVoice} style={{ marginLeft: 10 }}>Pause</button>
+      <button onClick={nextLine} style={{ marginLeft: 10 }}>Next</button>
 
-      <button onClick={pauseVoice} style={{ marginLeft: 10 }}>
-        Pause
-      </button>
-
-      <button onClick={nextLine} style={{ marginLeft: 10 }}>
-        Next line
-      </button>
-
-      <h2>Recording details</h2>
-
-      <input
-        placeholder="Your Name"
-        value={actorName}
-        onChange={(e) => setActorName(e.target.value)}
-      />
-
-      <input
-        placeholder="Role Name"
-        value={roleName}
-        onChange={(e) => setRoleName(e.target.value)}
-        style={{ marginLeft: 10 }}
-      />
-
-      <input
-        placeholder="Agency"
-        value={agency}
-        onChange={(e) => setAgency(e.target.value)}
-        style={{ marginLeft: 10 }}
-      />
-
-      <h2>5. Record</h2>
+      <h3>Recording</h3>
 
       <label>
         <input
           type="checkbox"
           checked={grayBackground}
           onChange={(e) => setGrayBackground(e.target.checked)}
-        />{" "}
-        Add gray background to video
+        /> Gray background
       </label>
 
-      <div style={{ marginTop: 10 }}>
-        <video
-          ref={videoRef}
-          autoPlay
-          muted
-          playsInline
-          style={{
-            width: 320,
-            background: grayBackground ? "#9ca3af" : "#000",
-          }}
-        />
-      </div>
+      <br /><br />
 
-      <canvas ref={canvasRef} style={{ display: "none" }} />
+      <video ref={videoRef} autoPlay muted style={{ display: "none" }} />
+
+      <canvas ref={canvasRef} style={{ width: 320 }} />
 
       <br />
 
@@ -414,20 +375,12 @@ export default function Page() {
       )}
 
       {videoUrl && (
-        <p>
-          <a
-            href={videoUrl}
-            download={`${(actorName || "actor").replace(/\s+/g, "_")}_${(
-              roleName || myRole
-            ).replace(/\s+/g, "_")}_${(agency || "agency").replace(
-              /\s+/g,
-              "_"
-            )}.webm`}
-            style={{ color: "#fff" }}
-          >
-            Download Video
-          </a>
-        </p>
+        <a
+          href={videoUrl}
+          download={`${actorName}_${roleName}_${agency}.webm`}
+        >
+          Download Video
+        </a>
       )}
     </main>
   );
