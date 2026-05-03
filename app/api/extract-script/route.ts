@@ -1,87 +1,61 @@
 import { NextResponse } from "next/server";
+import mammoth from "mammoth";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
-    const { script, myRole, voiceRole, extraRole1, extraRole2 } = await req.json();
+    const formData = await req.formData();
+    const file = formData.get("file") as File | null;
 
-    if (!script) {
+    if (!file) {
       return NextResponse.json(
-        { error: "No script provided" },
+        { error: "No file uploaded" },
         { status: 400 }
       );
     }
 
-    const prompt = `
-You are an expert acting coach.
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const name = file.name.toLowerCase();
 
-Analyze the following script and provide clear guidance for an actor.
+    let text = "";
 
-Actor role: ${myRole || "N/A"}
-Voice role: ${voiceRole || "N/A"}
-Extra role 1: ${extraRole1 || "N/A"}
-Extra role 2: ${extraRole2 || "N/A"}
-
-Please respond with:
-
-1. Overall tone of the scene
-2. Emotional state of each role
-3. How the actor should perform ${myRole || "their role"}
-4. Subtext (what is really going on beneath the dialogue)
-5. Pacing advice
-6. Key moments to emphasize
-
-SCRIPT:
-${script}
-`;
-
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        input: prompt,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("OpenAI error:", errorText);
-
+    if (name.endsWith(".docx")) {
+      const result = await mammoth.extractRawText({ buffer });
+      text = result.value;
+    } else if (name.endsWith(".txt")) {
+      text = buffer.toString("utf-8");
+    } else if (name.endsWith(".pdf")) {
       return NextResponse.json(
-        { error: "Failed to analyze script" },
-        { status: 500 }
+        { error: "PDF not supported yet. Please upload .docx or .txt." },
+        { status: 400 }
+      );
+    } else if (name.endsWith(".doc")) {
+      return NextResponse.json(
+        { error: "Please convert .doc to .docx." },
+        { status: 400 }
+      );
+    } else {
+      return NextResponse.json(
+        { error: "Unsupported file type." },
+        { status: 400 }
       );
     }
 
-    const data = await response.json();
+    // Clean weird characters
+    text = text
+      .replace(/\r/g, "")
+      .replace(/\t/g, " ")
+      .replace(/\u0000/g, "")
+      .trim();
 
-    // Extract text safely
-    let analysis = "";
-
-    if (data.output_text) {
-      analysis = data.output_text;
-    } else if (data.output && data.output.length > 0) {
-      analysis = data.output
-        .map((item: any) =>
-          item.content?.map((c: any) => c.text).join("")
-        )
-        .join("\n");
-    } else {
-      analysis = "No analysis returned.";
-    }
-
-    return NextResponse.json({ analysis });
+    return NextResponse.json({ text });
 
   } catch (error: any) {
-    console.error("Analyze Script Error:", error);
+    console.error("EXTRACT SCRIPT ERROR:", error);
 
     return NextResponse.json(
-      { error: error?.message || "Server error" },
+      { error: error?.message || "Failed to process file" },
       { status: 500 }
     );
   }
