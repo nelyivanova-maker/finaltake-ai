@@ -32,6 +32,8 @@ export default function Page() {
   const [agency, setAgency] = useState("");
   const [recording, setRecording] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState("");
+  const [voice, setVoice] = useState("EXAVITQu4vr4xnSDxMaL");
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -41,8 +43,48 @@ export default function Page() {
   const lines = useMemo(() => parseScript(script), [script]);
   const roles = Array.from(new Set(lines.map((line) => line.speaker)));
   const current = lines[lineIndex];
-
   const isMyLine = current?.speaker === myRole;
+
+  async function aiReadLine() {
+    if (!current || isMyLine) return;
+
+    setIsSpeaking(true);
+
+    try {
+      const response = await fetch("/api/voice", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: current.text,
+          voiceId: voice,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Voice generation failed");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+
+      audio.onended = () => {
+        setIsSpeaking(false);
+        nextLine();
+      };
+
+      audio.onerror = () => {
+        setIsSpeaking(false);
+      };
+
+      await audio.play();
+    } catch (error) {
+      setIsSpeaking(false);
+      alert("AI voice failed. Check your ElevenLabs API key in Vercel.");
+    }
+  }
 
   function nextLine() {
     setLineIndex((i) => Math.min(i + 1, lines.length - 1));
@@ -50,6 +92,7 @@ export default function Page() {
 
   function reset() {
     setLineIndex(0);
+    window.speechSynthesis?.cancel();
   }
 
   async function startRecording() {
@@ -95,17 +138,34 @@ export default function Page() {
   return (
     <main style={{ padding: 24, fontFamily: "Arial", background: "#111", color: "white", minHeight: "100vh" }}>
       <h1>🎬 FinalTake AI</h1>
-      <p>Self-tape MVP: AI reads the other role. You read your selected role.</p>
+      <p>Real AI reader voice for the non-chosen role.</p>
 
       <section style={{ marginTop: 24 }}>
         <h2>1. Script</h2>
+
+        <input
+          type="file"
+          accept=".txt"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = () => {
+              setScript(String(reader.result || ""));
+              setLineIndex(0);
+            };
+            reader.readAsText(file);
+          }}
+        />
+
         <textarea
           value={script}
           onChange={(e) => {
             setScript(e.target.value);
             setLineIndex(0);
           }}
-          style={{ width: "100%", height: 140, padding: 12 }}
+          style={{ width: "100%", height: 140, padding: 12, marginTop: 12 }}
         />
       </section>
 
@@ -113,15 +173,24 @@ export default function Page() {
         <h2>2. Choose your role</h2>
         <select value={myRole} onChange={(e) => setMyRole(e.target.value)}>
           {roles.map((role) => (
-            <option key={role} value={role}>
-              {role}
-            </option>
+            <option key={role}>{role}</option>
           ))}
         </select>
       </section>
 
       <section style={{ marginTop: 24 }}>
-        <h2>3. Recording details</h2>
+        <h2>3. AI Reader Voice</h2>
+        <select value={voice} onChange={(e) => setVoice(e.target.value)}>
+          <option value="EXAVITQu4vr4xnSDxMaL">Soft Female / Mum</option>
+          <option value="pNInz6obpgDQGcFmaJgB">Warm Male</option>
+          <option value="21m00Tcm4TlvDq8ikWAM">Young Female</option>
+          <option value="AZnzlk1XvdvUeBnXmlld">Clear Narrator</option>
+        </select>
+      </section>
+
+      <section style={{ marginTop: 24 }}>
+        <h2>4. Recording details</h2>
+
         <input placeholder="Your Name" value={name} onChange={(e) => setName(e.target.value)} />
         <input placeholder="Role Name" value={roleName} onChange={(e) => setRoleName(e.target.value)} />
         <input placeholder="Agency" value={agency} onChange={(e) => setAgency(e.target.value)} />
@@ -138,18 +207,20 @@ export default function Page() {
         <h2>{current?.speaker}</h2>
         <p style={{ fontSize: 36, fontWeight: "bold" }}>{current?.text}</p>
 
-        <p>
-          {isMyLine
-            ? "Your turn: read this line."
-            : "AI Reader: this line should be read by the app."}
-        </p>
+        {!isMyLine && (
+          <button onClick={aiReadLine} disabled={isSpeaking} style={{ marginRight: 8 }}>
+            {isSpeaking ? "Speaking..." : "🎭 AI Read Actor Voice"}
+          </button>
+        )}
 
-        <button onClick={nextLine}>Next Line</button>
+        {isMyLine && <p>Your turn: read this line.</p>}
+
+        <button onClick={nextLine}>Next</button>
         <button onClick={reset} style={{ marginLeft: 8 }}>Reset</button>
       </section>
 
       <section style={{ marginTop: 24 }}>
-        <h2>4. Record</h2>
+        <h2>5. Record</h2>
 
         {mode === "video" && (
           <video
