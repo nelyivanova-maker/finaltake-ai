@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import mammoth from "mammoth";
 
+export const runtime = "nodejs";
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
@@ -16,31 +18,36 @@ export async function POST(req: Request) {
     let text = "";
 
     if (name.endsWith(".pdf")) {
+      // dynamic import to avoid build issues
       const pdfParseModule = await import("pdf-parse");
-      const PDFParse = pdfParseModule.PDFParse;
+      const pdfParse = (pdfParseModule as any).default;
 
-      const parser = new PDFParse({ data: buffer });
-      const result = await parser.getText();
-      text = result.text;
-      await parser.destroy();
+      const data = await pdfParse(buffer);
+      text = data.text;
+
     } else if (name.endsWith(".docx")) {
       const result = await mammoth.extractRawText({ buffer });
       text = result.value;
+
     } else if (name.endsWith(".doc")) {
       return NextResponse.json(
         { error: "Please convert .doc files to .docx first." },
         { status: 400 }
       );
+
     } else {
       text = buffer.toString("utf-8");
     }
 
     return NextResponse.json({ text });
-  } catch (error) {
+
+  } catch (error: any) {
     console.error("UPLOAD ERROR:", error);
 
     return NextResponse.json(
-      { error: "Failed to process file. Check server console." },
+      {
+        error: error?.message || "Failed to process file",
+      },
       { status: 500 }
     );
   }
