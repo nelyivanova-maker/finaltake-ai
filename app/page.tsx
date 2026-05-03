@@ -1,10 +1,8 @@
-"use client";
-
 export default function Page() {
   return (
-    <main style={{ padding: 40, fontFamily: "Arial" }}>
-      <h1>🎬 FinalTake AI is working</h1>
-      <p>The page builds correctly.</p>
+    <main>
+      <h1>Hello world</h1>
+      <p>Your Next.js app is working 🎉</p>
     </main>
   );
 }
