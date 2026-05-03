@@ -1,61 +1,48 @@
 import { NextResponse } from "next/server";
-import mammoth from "mammoth";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
-    const formData = await req.formData();
-    const file = formData.get("file") as File | null;
+    const body = await req.json();
 
-    if (!file) {
+    const script = body?.script || "";
+    const myRole = body?.myRole || "Actor";
+
+    if (!script.trim()) {
       return NextResponse.json(
-        { error: "No file uploaded" },
+        { error: "No script provided" },
         { status: 400 }
       );
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const name = file.name.toLowerCase();
+    // SIMPLE SAFE ANALYSIS (no external API yet)
+    const analysis = `
+TONE:
+This scene appears tense and emotionally driven.
 
-    let text = "";
+YOUR ROLE (${myRole}):
+Play with intention. Focus on reacting truthfully to the other character. Avoid rushing the lines.
 
-    if (name.endsWith(".docx")) {
-      const result = await mammoth.extractRawText({ buffer });
-      text = result.value;
-    } else if (name.endsWith(".txt")) {
-      text = buffer.toString("utf-8");
-    } else if (name.endsWith(".pdf")) {
-      return NextResponse.json(
-        { error: "PDF not supported yet. Please upload .docx or .txt." },
-        { status: 400 }
-      );
-    } else if (name.endsWith(".doc")) {
-      return NextResponse.json(
-        { error: "Please convert .doc to .docx." },
-        { status: 400 }
-      );
-    } else {
-      return NextResponse.json(
-        { error: "Unsupported file type." },
-        { status: 400 }
-      );
-    }
+SUBTEXT:
+There is underlying conflict or fear beneath the dialogue. The characters are not fully saying what they feel.
 
-    // Clean weird characters
-    text = text
-      .replace(/\r/g, "")
-      .replace(/\t/g, " ")
-      .replace(/\u0000/g, "")
-      .trim();
+PACING:
+Start controlled and grounded. Let intensity build gradually.
 
-    return NextResponse.json({ text });
+KEY MOMENTS:
+- Emotional shifts in dialogue
+- Confrontation lines
+- Reactions to other characters
+`;
+
+    return NextResponse.json({ analysis });
 
   } catch (error: any) {
-    console.error("EXTRACT SCRIPT ERROR:", error);
+    console.error("ANALYZE ERROR:", error);
 
     return NextResponse.json(
-      { error: error?.message || "Failed to process file" },
+      { error: error?.message || "Failed to analyze script" },
       { status: 500 }
     );
   }
