@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 type Cue = {
   role: string;
@@ -20,42 +20,41 @@ function extractRoles(text: string) {
     if (match) roles.add(match[1]);
   }
 
-  return Array.from(roles).sort();
+  return Array.from(roles);
 }
 
 function parseCues(text: string, roles: string[]) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   const cues: Cue[] = [];
 
-  let currentRole = "";
-  let currentText: string[] = [];
+  let role = "";
+  let buffer: string[] = [];
 
   function save() {
-    if (currentRole && currentText.length) {
-      cues.push({ role: currentRole, text: currentText.join(" ") });
+    if (role && buffer.length) {
+      cues.push({ role, text: buffer.join(" ") });
     }
   }
 
-  for (let raw of lines) {
-    const line = raw.trim();
+  for (let line of lines) {
     const upper = line.toUpperCase();
 
     if (roles.includes(upper)) {
       save();
-      currentRole = upper;
-      currentText = [];
+      role = upper;
+      buffer = [];
       continue;
     }
 
     const colon = line.match(/^([A-Za-z][A-Za-z0-9 '’.-]{1,35}):\s*(.*)$/);
     if (colon) {
       save();
-      currentRole = colon[1].toUpperCase();
-      currentText = [colon[2]];
+      role = colon[1].toUpperCase();
+      buffer = [colon[2]];
       continue;
     }
 
-    if (currentRole) currentText.push(line);
+    if (role) buffer.push(line);
   }
 
   save();
@@ -71,10 +70,10 @@ export default function Page() {
   const [roles, setRoles] = useState<string[]>([]);
   const [myRole, setMyRole] = useState("");
   const [voiceRole, setVoiceRole] = useState("");
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [index, setIndex] = useState(0);
 
-  const [videoUrl, setVideoUrl] = useState("");
   const [recording, setRecording] = useState(false);
+  const [videoUrl, setVideoUrl] = useState("");
 
   const [actorName, setActorName] = useState("");
   const [roleName, setRoleName] = useState("");
@@ -82,64 +81,51 @@ export default function Page() {
 
   const cues = parseCues(script, roles);
 
-  async function readText(text: string) {
+  async function read(text: string) {
     const res = await fetch("/api/tts", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
 
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.play();
+    new Audio(url).play();
   }
 
   function start() {
-    const cue = cues[currentIndex];
-    if (cue && cue.role === voiceRole) {
-      readText(cue.text);
-    }
+    const cue = cues[index];
+    if (cue?.role === voiceRole) read(cue.text);
   }
 
-  function nextLine() {
-    const next = Math.min(currentIndex + 1, cues.length - 1);
-    setCurrentIndex(next);
+  function next() {
+    const nextIndex = Math.min(index + 1, cues.length - 1);
+    setIndex(nextIndex);
 
     setTimeout(() => {
-      const cue = cues[next];
-      if (cue?.role === voiceRole) {
-        readText(cue.text);
-      }
+      const cue = cues[nextIndex];
+      if (cue?.role === voiceRole) read(cue.text);
     }, 200);
   }
 
   async function startRecording() {
     setRecording(true);
-    setVideoUrl("");
 
     const stream = await navigator.mediaDevices.getUserMedia({
       video: true,
       audio: true,
     });
 
-    if (videoRef.current) {
-      videoRef.current.srcObject = stream;
-    }
+    if (videoRef.current) videoRef.current.srcObject = stream;
 
     const chunks: BlobPart[] = [];
     const recorder = new MediaRecorder(stream);
 
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunks.push(e.data);
-    };
+    recorder.ondataavailable = (e) => chunks.push(e.data);
 
     recorder.onstop = () => {
       const blob = new Blob(chunks, { type: "video/webm" });
-      const url = URL.createObjectURL(blob);
-      setVideoUrl(url);
+      setVideoUrl(URL.createObjectURL(blob));
       stream.getTracks().forEach((t) => t.stop());
     };
 
@@ -180,12 +166,13 @@ export default function Page() {
           const data = await res.json();
           const text = data.text || "";
 
-          const foundRoles = extractRoles(text);
+          const found = extractRoles(text);
+
           setScript(text);
-          setRoles(foundRoles);
-          setMyRole(foundRoles[0] || "");
-          setVoiceRole(foundRoles[1] || foundRoles[0] || "");
-          setCurrentIndex(0);
+          setRoles(found);
+          setMyRole(found[0] || "");
+          setVoiceRole(found[1] || found[0] || "");
+          setIndex(0);
         }}
       />
 
@@ -197,30 +184,33 @@ export default function Page() {
         value={script}
         onChange={(e) => {
           const text = e.target.value;
-          const foundRoles = extractRoles(text);
           setScript(text);
-          setRoles(foundRoles);
+          setRoles(extractRoles(text));
         }}
         style={{ width: "100%", height: 200, marginTop: 10 }}
       />
 
-      <h2>2. Roles</h2>
+      <h2>2. Choose roles</h2>
 
-      <select value={myRole} onChange={(e) => setMyRole(e.target.value)}>
-        {roles.map((r) => (
-          <option key={r}>{r}</option>
-        ))}
-      </select>
+      <div>
+        <label>Your role: </label>
+        <select value={myRole} onChange={(e) => setMyRole(e.target.value)}>
+          {roles.map((r) => (
+            <option key={r}>{r}</option>
+          ))}
+        </select>
+      </div>
 
-      <select
-        value={voiceRole}
-        onChange={(e) => setVoiceRole(e.target.value)}
-        style={{ marginLeft: 10 }}
-      >
-        {roles.filter((r) => r !== myRole).map((r) => (
-          <option key={r}>{r}</option>
-        ))}
-      </select>
+      <div style={{ marginTop: 10 }}>
+        <label>Voice reads: </label>
+        <select value={voiceRole} onChange={(e) => setVoiceRole(e.target.value)}>
+          {roles
+            .filter((r) => r !== myRole)
+            .map((r) => (
+              <option key={r}>{r}</option>
+            ))}
+        </select>
+      </div>
 
       <h2>3. Reading</h2>
 
@@ -232,7 +222,7 @@ export default function Page() {
               marginBottom: 10,
               padding: 10,
               background:
-                i === currentIndex
+                i === index
                   ? cue.role === myRole
                     ? "#166534"
                     : "#1d4ed8"
@@ -254,7 +244,7 @@ export default function Page() {
       <button onClick={() => speechSynthesis.cancel()} style={{ marginLeft: 10 }}>
         Stop
       </button>
-      <button onClick={nextLine} style={{ marginLeft: 10 }}>
+      <button onClick={next} style={{ marginLeft: 10 }}>
         Next line
       </button>
 
@@ -267,12 +257,7 @@ export default function Page() {
       <h2>5. Record</h2>
 
       <div style={{ background: "#9ca3af", padding: 20, borderRadius: 10 }}>
-        <video
-          ref={videoRef}
-          autoPlay
-          muted
-          style={{ width: 320, borderRadius: 8 }}
-        />
+        <video ref={videoRef} autoPlay muted style={{ width: 320 }} />
       </div>
 
       {!recording ? (
