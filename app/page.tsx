@@ -37,9 +37,7 @@ function extractRoles(text: string) {
     }
 
     const colonMatch = line.match(/^([A-Za-z][A-Za-z0-9 '’.-]{1,35}):/);
-    if (colonMatch) {
-      roles.add(colonMatch[1].toUpperCase());
-    }
+    if (colonMatch) roles.add(colonMatch[1].toUpperCase());
   }
 
   return Array.from(roles).sort();
@@ -48,15 +46,13 @@ function extractRoles(text: string) {
 function parseCues(text: string, roles: string[]) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   const cues: Cue[] = [];
+
   let currentRole = "";
   let currentText: string[] = [];
 
   function saveCue() {
     if (currentRole && currentText.length > 0) {
-      cues.push({
-        role: currentRole,
-        text: currentText.join(" "),
-      });
+      cues.push({ role: currentRole, text: currentText.join(" ") });
     }
   }
 
@@ -68,11 +64,11 @@ function parseCues(text: string, roles: string[]) {
       .replace(/\(V\.O\.\)/gi, "")
       .trim();
 
-    const upperLine = line.toUpperCase();
+    const upper = line.toUpperCase();
 
-    if (roles.includes(upperLine)) {
+    if (roles.includes(upper)) {
       saveCue();
-      currentRole = upperLine;
+      currentRole = upper;
       currentText = [];
       continue;
     }
@@ -85,9 +81,7 @@ function parseCues(text: string, roles: string[]) {
       continue;
     }
 
-    if (currentRole) {
-      currentText.push(line);
-    }
+    if (currentRole) currentText.push(line);
   }
 
   saveCue();
@@ -97,6 +91,8 @@ function parseCues(text: string, roles: string[]) {
 export default function Page() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cueRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
 
   const [script, setScript] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
@@ -105,8 +101,25 @@ export default function Page() {
   const [fileName, setFileName] = useState("");
   const [status, setStatus] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState("");
+  const [recording, setRecording] = useState(false);
+  const [videoUrl, setVideoUrl] = useState("");
 
   const cues = parseCues(script, roles);
+
+  useEffect(() => {
+    function loadVoices() {
+      const available = window.speechSynthesis.getVoices();
+      setVoices(available);
+      if (available.length > 0 && !selectedVoice) {
+        setSelectedVoice(available[0].name);
+      }
+    }
+
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }, [selectedVoice]);
 
   useEffect(() => {
     const saved = localStorage.getItem("script");
@@ -129,6 +142,13 @@ export default function Page() {
       block: "center",
     });
   }, [currentIndex]);
+
+  function updateMyRole(role: string) {
+    setMyRole(role);
+
+    const otherRole = roles.find((r) => r !== role) || "";
+    setVoiceRole(otherRole);
+  }
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -179,12 +199,17 @@ export default function Page() {
     setFileName("");
     setStatus("");
     setCurrentIndex(0);
+    setVideoUrl("");
   }
 
   function readText(text: string) {
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
+    const voice = voices.find((v) => v.name === selectedVoice);
+
+    if (voice) utterance.voice = voice;
+
     utterance.rate = 0.95;
     utterance.pitch = 1;
     utterance.volume = 1;
@@ -192,7 +217,7 @@ export default function Page() {
     window.speechSynthesis.speak(utterance);
   }
 
-  function playCurrentLine() {
+  function readCurrentIfVoice() {
     const cue = cues[currentIndex];
     if (!cue) return;
 
@@ -210,7 +235,49 @@ export default function Page() {
       if (cue?.role === voiceRole) {
         readText(cue.text);
       }
-    }, 200);
+    }, 250);
+  }
+
+  async function startRecording() {
+    setRecording(true);
+    setVideoUrl("");
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: true,
+    });
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+    }
+
+    const chunks: BlobPart[] = [];
+    const recorder = new MediaRecorder(stream);
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    };
+
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: "video/webm" });
+      const url = URL.createObjectURL(blob);
+      setVideoUrl(url);
+
+      stream.getTracks().forEach((track) => track.stop());
+    };
+
+    recorderRef.current = recorder;
+    recorder.start();
+
+    setTimeout(() => {
+      readCurrentIfVoice();
+    }, 500);
+  }
+
+  function stopRecording() {
+    setRecording(false);
+    window.speechSynthesis.cancel();
+    recorderRef.current?.stop();
   }
 
   return (
@@ -264,7 +331,7 @@ export default function Page() {
       <h2>2. Choose roles</h2>
 
       <label>Your role: </label>
-      <select value={myRole} onChange={(e) => setMyRole(e.target.value)}>
+      <select value={myRole} onChange={(e) => updateMyRole(e.target.value)}>
         {roles.map((r) => (
           <option key={r} value={r}>{r}</option>
         ))}
@@ -275,8 +342,22 @@ export default function Page() {
 
       <label>Voice reads: </label>
       <select value={voiceRole} onChange={(e) => setVoiceRole(e.target.value)}>
-        {roles.map((r) => (
-          <option key={r} value={r}>{r}</option>
+        {roles
+          .filter((r) => r !== myRole)
+          .map((r) => (
+            <option key={r} value={r}>{r}</option>
+          ))}
+      </select>
+
+      <br />
+      <br />
+
+      <label>Voice: </label>
+      <select value={selectedVoice} onChange={(e) => setSelectedVoice(e.target.value)}>
+        {voices.map((v) => (
+          <option key={v.name} value={v.name}>
+            {v.name}
+          </option>
         ))}
       </select>
 
@@ -291,8 +372,6 @@ export default function Page() {
           borderRadius: "10px",
         }}
       >
-        {cues.length === 0 && <p>No dialogue found.</p>}
-
         {cues.map((cue, index) => {
           const isCurrent = index === currentIndex;
           const isMine = cue.role === myRole;
@@ -310,12 +389,12 @@ export default function Page() {
                 borderRadius: "8px",
                 background: isCurrent
                   ? isMine
-                    ? "#14532d"
+                    ? "#166534"
                     : isVoice
                     ? "#1d4ed8"
                     : "#374151"
                   : "#1f2937",
-                border: isCurrent ? "3px solid #fff" : "1px solid #374151",
+                border: isCurrent ? "3px solid white" : "1px solid #374151",
                 opacity: isCurrent ? 1 : 0.55,
               }}
             >
@@ -330,7 +409,7 @@ export default function Page() {
 
       <h2>4. Controls</h2>
 
-      <button onClick={playCurrentLine}>
+      <button onClick={readCurrentIfVoice}>
         ▶ Read current voice line
       </button>
 
@@ -346,9 +425,37 @@ export default function Page() {
       </button>
 
       <h2>5. Record</h2>
-      <div style={{ background: "#667085", height: "120px", borderRadius: "10px" }} />
 
-      <button style={{ marginTop: "10px" }}>Start Recording</button>
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        style={{
+          width: "400px",
+          height: "260px",
+          background: "#667085",
+          borderRadius: "10px",
+          display: "block",
+        }}
+      />
+
+      {!recording ? (
+        <button onClick={startRecording} style={{ marginTop: "10px" }}>
+          Start Recording
+        </button>
+      ) : (
+        <button onClick={stopRecording} style={{ marginTop: "10px" }}>
+          Stop Recording
+        </button>
+      )}
+
+      {videoUrl && (
+        <p>
+          <a href={videoUrl} download="finaltake-recording.webm" style={{ color: "#fff" }}>
+            Download recording
+          </a>
+        </p>
+      )}
     </main>
   );
 }
