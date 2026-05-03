@@ -1,4 +1,7 @@
 {
+  "name": "finaltake-ai",
+  "version": "1.0.0",
+  "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -7,7 +10,9 @@
   "dependencies": {
     "next": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "mammoth": "latest",
+    "pdf-parse": "latest"
   },
   "devDependencies": {
     "typescript": "latest",
