@@ -8,36 +8,16 @@ type Cue = {
 };
 
 function extractRoles(text: string) {
-  const ignoreWords = new Set([
-    "INT", "EXT", "SCENE", "CUT", "TO", "FADE", "IN", "OUT",
-    "DISSOLVE", "BEAT", "DAY", "NIGHT", "EVENING", "MORNING",
-    "DUSK", "DAWN", "SCREAMS", "MOVE", "LET", "GO"
-  ]);
-
   const roles = new Set<string>();
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
 
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i]
-      .replace(/\(CONT'D\)/gi, "")
-      .replace(/\(CONT’D\)/gi, "")
-      .replace(/\(O\.C\.\)/gi, "")
-      .replace(/\(V\.O\.\)/gi, "")
-      .trim();
+  for (let line of lines) {
+    const upper = line.toUpperCase();
 
-    const nextLine = lines[i + 1] || "";
+    if (/^[A-Z]{2,}$/.test(upper)) roles.add(upper);
 
-    if (
-      /^[A-Z]{2,}$/.test(line) &&
-      !ignoreWords.has(line) &&
-      nextLine.length > 0 &&
-      !nextLine.match(/^[A-Z\s]+$/)
-    ) {
-      roles.add(line);
-    }
-
-    const colonMatch = line.match(/^([A-Za-z][A-Za-z0-9 '’.-]{1,35}):/);
-    if (colonMatch) roles.add(colonMatch[1].toUpperCase());
+    const match = upper.match(/^([A-Z][A-Z0-9 '’.-]{1,35}):/);
+    if (match) roles.add(match[1]);
   }
 
   return Array.from(roles).sort();
@@ -50,47 +30,40 @@ function parseCues(text: string, roles: string[]) {
   let currentRole = "";
   let currentText: string[] = [];
 
-  function saveCue() {
-    if (currentRole && currentText.length > 0) {
+  function save() {
+    if (currentRole && currentText.length) {
       cues.push({ role: currentRole, text: currentText.join(" ") });
     }
   }
 
-  for (const raw of lines) {
-    let line = raw
-      .replace(/\(CONT'D\)/gi, "")
-      .replace(/\(CONT’D\)/gi, "")
-      .replace(/\(O\.C\.\)/gi, "")
-      .replace(/\(V\.O\.\)/gi, "")
-      .trim();
-
+  for (let raw of lines) {
+    const line = raw.trim();
     const upper = line.toUpperCase();
 
     if (roles.includes(upper)) {
-      saveCue();
+      save();
       currentRole = upper;
       currentText = [];
       continue;
     }
 
-    const colonMatch = line.match(/^([A-Za-z][A-Za-z0-9 '’.-]{1,35}):\s*(.*)$/);
-    if (colonMatch) {
-      saveCue();
-      currentRole = colonMatch[1].toUpperCase();
-      currentText = [colonMatch[2]];
+    const colon = line.match(/^([A-Za-z][A-Za-z0-9 '’.-]{1,35}):\s*(.*)$/);
+    if (colon) {
+      save();
+      currentRole = colon[1].toUpperCase();
+      currentText = [colon[2]];
       continue;
     }
 
     if (currentRole) currentText.push(line);
   }
 
-  saveCue();
+  save();
   return cues;
 }
 
 export default function Page() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const cueRefs = useRef<(HTMLDivElement | null)[]>([]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
 
@@ -98,130 +71,35 @@ export default function Page() {
   const [roles, setRoles] = useState<string[]>([]);
   const [myRole, setMyRole] = useState("");
   const [voiceRole, setVoiceRole] = useState("");
-  const [fileName, setFileName] = useState("");
-  const [status, setStatus] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [selectedVoice, setSelectedVoice] = useState("");
-  const [recording, setRecording] = useState(false);
+
   const [videoUrl, setVideoUrl] = useState("");
+  const [recording, setRecording] = useState(false);
+
+  const [actorName, setActorName] = useState("");
+  const [roleName, setRoleName] = useState("");
+  const [agency, setAgency] = useState("");
 
   const cues = parseCues(script, roles);
 
-  useEffect(() => {
-    function loadVoices() {
-      const available = window.speechSynthesis.getVoices();
-      setVoices(available);
-      if (available.length > 0 && !selectedVoice) {
-        setSelectedVoice(available[0].name);
-      }
-    }
-
-    loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
-  }, [selectedVoice]);
-
-  useEffect(() => {
-    const saved = localStorage.getItem("script");
-    if (saved) {
-      const foundRoles = extractRoles(saved);
-      setScript(saved);
-      setRoles(foundRoles);
-      setMyRole(foundRoles[0] || "");
-      setVoiceRole(foundRoles[1] || foundRoles[0] || "");
-    }
-  }, []);
-
-  useEffect(() => {
-    if (script) localStorage.setItem("script", script);
-  }, [script]);
-
-  useEffect(() => {
-    cueRefs.current[currentIndex]?.scrollIntoView({
-      behavior: "smooth",
-      block: "center",
+  async function readText(text: string) {
+    const res = await fetch("/api/tts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text }),
     });
-  }, [currentIndex]);
 
-  function updateMyRole(role: string) {
-    setMyRole(role);
-
-    const otherRole = roles.find((r) => r !== role) || "";
-    setVoiceRole(otherRole);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.play();
   }
 
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setFileName(file.name);
-    setStatus("Loading script...");
-
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const res = await fetch("/api/extract-script", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setStatus(data.error || "Could not read file.");
-        return;
-      }
-
-      const loadedText = data.text || "";
-      const foundRoles = extractRoles(loadedText);
-
-      setScript(loadedText);
-      setRoles(foundRoles);
-      setMyRole(foundRoles[0] || "");
-      setVoiceRole(foundRoles[1] || foundRoles[0] || "");
-      setCurrentIndex(0);
-      setStatus("Script loaded.");
-    } catch (error) {
-      console.error(error);
-      setStatus("Upload failed.");
-    }
-
-    e.target.value = "";
-  }
-
-  function resetScript() {
-    localStorage.removeItem("script");
-    setScript("");
-    setRoles([]);
-    setMyRole("");
-    setVoiceRole("");
-    setFileName("");
-    setStatus("");
-    setCurrentIndex(0);
-    setVideoUrl("");
-  }
-
-  function readText(text: string) {
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voice = voices.find((v) => v.name === selectedVoice);
-
-    if (voice) utterance.voice = voice;
-
-    utterance.rate = 0.95;
-    utterance.pitch = 1;
-    utterance.volume = 1;
-
-    window.speechSynthesis.speak(utterance);
-  }
-
-  function readCurrentIfVoice() {
+  function start() {
     const cue = cues[currentIndex];
-    if (!cue) return;
-
-    if (cue.role === voiceRole) {
+    if (cue && cue.role === voiceRole) {
       readText(cue.text);
     }
   }
@@ -235,7 +113,7 @@ export default function Page() {
       if (cue?.role === voiceRole) {
         readText(cue.text);
       }
-    }, 250);
+    }, 200);
   }
 
   async function startRecording() {
@@ -254,36 +132,31 @@ export default function Page() {
     const chunks: BlobPart[] = [];
     const recorder = new MediaRecorder(stream);
 
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) chunks.push(event.data);
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
     };
 
     recorder.onstop = () => {
       const blob = new Blob(chunks, { type: "video/webm" });
       const url = URL.createObjectURL(blob);
       setVideoUrl(url);
-
-      stream.getTracks().forEach((track) => track.stop());
+      stream.getTracks().forEach((t) => t.stop());
     };
 
     recorderRef.current = recorder;
     recorder.start();
 
-    setTimeout(() => {
-      readCurrentIfVoice();
-    }, 500);
+    setTimeout(start, 400);
   }
 
   function stopRecording() {
     setRecording(false);
-    window.speechSynthesis.cancel();
     recorderRef.current?.stop();
   }
 
   return (
-    <main style={{ background: "#000", color: "#fff", padding: "20px", minHeight: "100vh" }}>
-      <h1>🎬 FinalTake AI</h1>
-      <p>Upload and read scripts.</p>
+    <main style={{ background: "#000", color: "#fff", padding: 20 }}>
+      <h1>FinalTake AI</h1>
 
       <h2>1. Script</h2>
 
@@ -292,169 +165,129 @@ export default function Page() {
         type="file"
         accept=".txt,.docx"
         style={{ display: "none" }}
-        onChange={handleFile}
-      />
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
 
-      <button onClick={() => fileInputRef.current?.click()}>
-        Load New Script
-      </button>
+          const formData = new FormData();
+          formData.append("file", file);
 
-      <button onClick={resetScript} style={{ marginLeft: "10px" }}>
-        Reset
-      </button>
+          const res = await fetch("/api/extract-script", {
+            method: "POST",
+            body: formData,
+          });
 
-      {fileName && <p>Selected: {fileName}</p>}
-      {status && <p>{status}</p>}
+          const data = await res.json();
+          const text = data.text || "";
 
-      <textarea
-        value={script}
-        onChange={(e) => {
-          const newScript = e.target.value;
-          const foundRoles = extractRoles(newScript);
-
-          setScript(newScript);
+          const foundRoles = extractRoles(text);
+          setScript(text);
           setRoles(foundRoles);
           setMyRole(foundRoles[0] || "");
           setVoiceRole(foundRoles[1] || foundRoles[0] || "");
           setCurrentIndex(0);
         }}
-        placeholder="Upload or paste your script..."
-        style={{
-          width: "100%",
-          height: "220px",
-          marginTop: "10px",
-          color: "#000",
-          padding: "10px",
-        }}
       />
 
-      <h2>2. Choose roles</h2>
+      <button onClick={() => fileInputRef.current?.click()}>
+        Load Script
+      </button>
 
-      <label>Your role: </label>
-      <select value={myRole} onChange={(e) => updateMyRole(e.target.value)}>
-        {roles.map((r) => (
-          <option key={r} value={r}>{r}</option>
-        ))}
-      </select>
-
-      <br />
-      <br />
-
-      <label>Voice reads: </label>
-      <select value={voiceRole} onChange={(e) => setVoiceRole(e.target.value)}>
-        {roles
-          .filter((r) => r !== myRole)
-          .map((r) => (
-            <option key={r} value={r}>{r}</option>
-          ))}
-      </select>
-
-      <br />
-      <br />
-
-      <label>Voice: </label>
-      <select value={selectedVoice} onChange={(e) => setSelectedVoice(e.target.value)}>
-        {voices.map((v) => (
-          <option key={v.name} value={v.name}>
-            {v.name}
-          </option>
-        ))}
-      </select>
-
-      <h2>3. Reading window</h2>
-
-      <div
-        style={{
-          background: "#111827",
-          height: "320px",
-          overflowY: "auto",
-          padding: "20px",
-          borderRadius: "10px",
+      <textarea
+        value={script}
+        onChange={(e) => {
+          const text = e.target.value;
+          const foundRoles = extractRoles(text);
+          setScript(text);
+          setRoles(foundRoles);
         }}
-      >
-        {cues.map((cue, index) => {
-          const isCurrent = index === currentIndex;
-          const isMine = cue.role === myRole;
-          const isVoice = cue.role === voiceRole;
+        style={{ width: "100%", height: 200, marginTop: 10 }}
+      />
 
-          return (
-            <div
-              key={index}
-              ref={(el) => {
-                cueRefs.current[index] = el;
-              }}
-              style={{
-                padding: "14px",
-                marginBottom: "12px",
-                borderRadius: "8px",
-                background: isCurrent
-                  ? isMine
+      <h2>2. Roles</h2>
+
+      <select value={myRole} onChange={(e) => setMyRole(e.target.value)}>
+        {roles.map((r) => (
+          <option key={r}>{r}</option>
+        ))}
+      </select>
+
+      <select
+        value={voiceRole}
+        onChange={(e) => setVoiceRole(e.target.value)}
+        style={{ marginLeft: 10 }}
+      >
+        {roles.filter((r) => r !== myRole).map((r) => (
+          <option key={r}>{r}</option>
+        ))}
+      </select>
+
+      <h2>3. Reading</h2>
+
+      <div style={{ height: 300, overflowY: "auto", background: "#111", padding: 10 }}>
+        {cues.map((cue, i) => (
+          <div
+            key={i}
+            style={{
+              marginBottom: 10,
+              padding: 10,
+              background:
+                i === currentIndex
+                  ? cue.role === myRole
                     ? "#166534"
-                    : isVoice
-                    ? "#1d4ed8"
-                    : "#374151"
-                  : "#1f2937",
-                border: isCurrent ? "3px solid white" : "1px solid #374151",
-                opacity: isCurrent ? 1 : 0.55,
-              }}
-            >
-              <strong>{cue.role}</strong>
-              <p style={{ fontSize: isCurrent ? "26px" : "18px" }}>
-                {cue.text}
-              </p>
-            </div>
-          );
-        })}
+                    : "#1d4ed8"
+                  : "#333",
+            }}
+          >
+            <strong>{cue.role}</strong>
+            <p>{cue.text}</p>
+          </div>
+        ))}
       </div>
 
       <h2>4. Controls</h2>
 
-      <button onClick={readCurrentIfVoice}>
-        ▶ Read current voice line
+      <button onClick={start}>Start</button>
+      <button onClick={() => speechSynthesis.pause()} style={{ marginLeft: 10 }}>
+        Pause
       </button>
-
-      <button onClick={nextLine} style={{ marginLeft: "10px" }}>
+      <button onClick={() => speechSynthesis.cancel()} style={{ marginLeft: 10 }}>
+        Stop
+      </button>
+      <button onClick={nextLine} style={{ marginLeft: 10 }}>
         Next line
       </button>
 
-      <button
-        onClick={() => window.speechSynthesis.cancel()}
-        style={{ marginLeft: "10px" }}
-      >
-        Stop voice
-      </button>
+      <h2>Recording details</h2>
+
+      <input placeholder="Your Name" value={actorName} onChange={(e) => setActorName(e.target.value)} />
+      <input placeholder="Role Name" value={roleName} onChange={(e) => setRoleName(e.target.value)} style={{ marginLeft: 10 }} />
+      <input placeholder="Agency" value={agency} onChange={(e) => setAgency(e.target.value)} style={{ marginLeft: 10 }} />
 
       <h2>5. Record</h2>
 
-      <video
-        ref={videoRef}
-        autoPlay
-        muted
-        style={{
-          width: "400px",
-          height: "260px",
-          background: "#667085",
-          borderRadius: "10px",
-          display: "block",
-        }}
-      />
+      <div style={{ background: "#9ca3af", padding: 20, borderRadius: 10 }}>
+        <video
+          ref={videoRef}
+          autoPlay
+          muted
+          style={{ width: 320, borderRadius: 8 }}
+        />
+      </div>
 
       {!recording ? (
-        <button onClick={startRecording} style={{ marginTop: "10px" }}>
-          Start Recording
-        </button>
+        <button onClick={startRecording}>Start Recording</button>
       ) : (
-        <button onClick={stopRecording} style={{ marginTop: "10px" }}>
-          Stop Recording
-        </button>
+        <button onClick={stopRecording}>Stop Recording</button>
       )}
 
       {videoUrl && (
-        <p>
-          <a href={videoUrl} download="finaltake-recording.webm" style={{ color: "#fff" }}>
-            Download recording
-          </a>
-        </p>
+        <a
+          href={videoUrl}
+          download={`${(actorName || "actor").replace(/\s+/g, "_")}_${(roleName || myRole).replace(/\s+/g, "_")}_${(agency || "agency").replace(/\s+/g, "_")}.webm`}
+        >
+          Download Video
+        </a>
       )}
     </main>
   );
