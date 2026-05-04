@@ -74,13 +74,13 @@ export default function CreateVideo({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const animationRef = useRef<number | null>(null);
+  const cueRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const [index, setIndex] = useState(0);
   const [recording, setRecording] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
   const [videoType, setVideoType] = useState("video/webm");
   const [grayBackground, setGrayBackground] = useState(false);
-  const [handsFree, setHandsFree] = useState(true);
 
   const [actorName, setActorName] = useState("");
   const [roleName, setRoleName] = useState("");
@@ -92,7 +92,17 @@ export default function CreateVideo({
     setIndex(0);
   }, [script, myRole, voiceRole]);
 
-  async function read(text: string, afterEnd?: () => void) {
+  useEffect(() => {
+    cueRefs.current[index]?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }, [index]);
+
+  async function readVoiceLine(lineIndex: number) {
+    const cue = cues[lineIndex];
+    if (!cue || cue.role !== voiceRole) return;
+
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
@@ -103,7 +113,7 @@ export default function CreateVideo({
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text: cue.text }),
     });
 
     const blob = await res.blob();
@@ -113,35 +123,55 @@ export default function CreateVideo({
     audioRef.current = audio;
 
     audio.onended = () => {
-      if (afterEnd) afterEnd();
+      const next = lineIndex + 1;
+
+      if (next < cues.length) {
+        setIndex(next);
+
+        const nextCue = cues[next];
+
+        // If next line is also voice, continue automatically.
+        // If next line is your role, stop and wait for you to read.
+        if (nextCue.role === voiceRole) {
+          setTimeout(() => readVoiceLine(next), 500);
+        }
+      }
     };
 
     audio.play();
   }
 
-  function goToLine(newIndex: number, autoPlay = true) {
-    const safeIndex = Math.max(0, Math.min(newIndex, cues.length - 1));
-    setIndex(safeIndex);
+  function startFromCurrentLine() {
+    const cue = cues[index];
 
-    if (!autoPlay) return;
+    if (!cue) return;
 
-    const cue = cues[safeIndex];
-
-    if (cue?.role === voiceRole) {
-      read(cue.text, () => {
-        if (handsFree && safeIndex < cues.length - 1) {
-          setTimeout(() => goToLine(safeIndex + 1, true), 500);
-        }
-      });
+    // If AI voice has this line, read it.
+    // If your role has this line, do nothing and wait for you.
+    if (cue.role === voiceRole) {
+      readVoiceLine(index);
     }
   }
 
   function nextLine() {
-    goToLine(index + 1, true);
+    const next = Math.min(index + 1, cues.length - 1);
+    setIndex(next);
+
+    setTimeout(() => {
+      if (cues[next]?.role === voiceRole) {
+        readVoiceLine(next);
+      }
+    }, 250);
   }
 
   function previousLine() {
-    goToLine(index - 1, true);
+    const previous = Math.max(index - 1, 0);
+    setIndex(previous);
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
   }
 
   function pauseVoice() {
@@ -197,7 +227,11 @@ export default function CreateVideo({
     setIndex(0);
 
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
+      video: {
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        facingMode: "user",
+      },
       audio: true,
     });
 
@@ -207,12 +241,13 @@ export default function CreateVideo({
     }
 
     const canvas = canvasRef.current!;
-    canvas.width = 1280;
-    canvas.height = 720;
+    canvas.width = 1920;
+    canvas.height = 1080;
 
     drawCanvas();
 
     const canvasStream = canvas.captureStream(30);
+
     const finalStream = new MediaStream([
       ...canvasStream.getVideoTracks(),
       ...stream.getAudioTracks(),
@@ -250,7 +285,12 @@ export default function CreateVideo({
     recorder.start();
 
     setTimeout(() => {
-      goToLine(0, true);
+      const firstCue = cues[0];
+
+      if (firstCue?.role === voiceRole) {
+        readVoiceLine(0);
+      }
+      // If first line is your role, it waits for you.
     }, 700);
   }
 
@@ -293,7 +333,7 @@ export default function CreateVideo({
 
       <div
         style={{
-          height: 260,
+          height: 300,
           overflowY: "auto",
           background: "#000",
           padding: 12,
@@ -302,41 +342,39 @@ export default function CreateVideo({
       >
         {cues.length === 0 && <p>No dialogue loaded yet.</p>}
 
-        {cues.map((cue, i) => (
-          <div
-            key={i}
-            style={{
-              padding: 12,
-              marginBottom: 10,
-              borderRadius: 8,
-              background:
-                i === index
-                  ? cue.role === myRole
+        {cues.map((cue, i) => {
+          const isCurrent = i === index;
+          const isMine = cue.role === myRole;
+          const isVoice = cue.role === voiceRole;
+
+          return (
+            <div
+              key={i}
+              ref={(el) => {
+                cueRefs.current[i] = el;
+              }}
+              style={{
+                padding: isCurrent ? 18 : 12,
+                marginBottom: 10,
+                borderRadius: 8,
+                background: isCurrent
+                  ? isMine
                     ? "#166534"
-                    : "#1d4ed8"
+                    : isVoice
+                    ? "#1d4ed8"
+                    : "#374151"
                   : "#333",
-              border: i === index ? "3px solid white" : "none",
-              opacity: i === index ? 1 : 0.6,
-            }}
-          >
-            <strong>{cue.role}</strong>
-            <p style={{ fontSize: i === index ? 22 : 16 }}>{cue.text}</p>
-          </div>
-        ))}
+                border: isCurrent ? "3px solid white" : "none",
+                opacity: isCurrent ? 1 : 0.5,
+              }}
+            >
+              <strong>{cue.role}</strong>
+              <p style={{ fontSize: isCurrent ? 24 : 16 }}>{cue.text}</p>
+            </div>
+          );
+        })}
       </div>
 
-      <br />
-
-      <label>
-        <input
-          type="checkbox"
-          checked={handsFree}
-          onChange={(e) => setHandsFree(e.target.checked)}
-        />{" "}
-        Hands-free auto-advance
-      </label>
-
-      <br />
       <br />
 
       <button onClick={previousLine}>Previous line</button>
@@ -384,7 +422,7 @@ export default function CreateVideo({
           checked={grayBackground}
           onChange={(e) => setGrayBackground(e.target.checked)}
         />{" "}
-        Add gray background to video
+        Add gray background to horizontal video
       </label>
 
       <br />
@@ -395,8 +433,9 @@ export default function CreateVideo({
       <canvas
         ref={canvasRef}
         style={{
-          width: 360,
-          maxWidth: "100%",
+          width: "100%",
+          maxWidth: 520,
+          aspectRatio: "16 / 9",
           background: grayBackground ? "#9ca3af" : "#000",
           borderRadius: 12,
         }}
@@ -427,6 +466,10 @@ export default function CreateVideo({
           </a>
         </p>
       )}
+
+      <p style={{ fontSize: 13, opacity: 0.8 }}>
+        Recording is horizontal 16:9. MP4 depends on browser support; otherwise it saves as WEBM.
+      </p>
     </section>
   );
 }
