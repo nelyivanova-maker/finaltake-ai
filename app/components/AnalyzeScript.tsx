@@ -2,6 +2,17 @@
 
 import { useRef, useState } from "react";
 
+type AnalyzeScriptProps = {
+  script: string;
+  setScript: (value: string) => void;
+  roles: string[];
+  setRoles: (value: string[]) => void;
+  myRole: string;
+  setMyRole: (value: string) => void;
+  voiceRole: string;
+  setVoiceRole: (value: string) => void;
+};
+
 function cleanRole(line: string) {
   return line
     .replace(/\(CONT'D\)/gi, "")
@@ -21,43 +32,47 @@ function extractRoles(text: string) {
     "THE", "AND", "BUT", "CONTINUED", "CONT"
   ]);
 
-  const roles = new Set<string>();
+  const found = new Set<string>();
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
 
   for (const raw of lines) {
     const line = cleanRole(raw);
 
-    const isCharacterLine =
+    if (
       /^[A-Z][A-Z0-9 '’.-]{1,35}$/.test(line) &&
       !ignore.has(line) &&
       !line.startsWith("INT.") &&
       !line.startsWith("EXT.") &&
       !line.match(/^SCENE\s+\d+/i) &&
-      line.split(" ").length <= 3;
-
-    if (isCharacterLine) {
-      roles.add(line);
+      line.split(" ").length <= 3
+    ) {
+      found.add(line);
     }
 
     const colon = raw.match(/^([A-Za-z][A-Za-z0-9 '’.-]{1,35}):/);
     if (colon) {
       const role = colon[1].trim().toUpperCase();
       if (!ignore.has(role) && role.split(" ").length <= 3) {
-        roles.add(role);
+        found.add(role);
       }
     }
   }
 
-  return Array.from(roles).sort();
+  return Array.from(found).sort();
 }
 
-export default function AnalyzeScript() {
+export default function AnalyzeScript({
+  script,
+  setScript,
+  roles,
+  setRoles,
+  myRole,
+  setMyRole,
+  voiceRole,
+  setVoiceRole,
+}: AnalyzeScriptProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [script, setScript] = useState("");
-  const [roles, setRoles] = useState<string[]>([]);
-  const [myRole, setMyRole] = useState("");
-  const [voiceRole, setVoiceRole] = useState("");
   const [analysis, setAnalysis] = useState("");
   const [status, setStatus] = useState("");
 
@@ -127,7 +142,6 @@ export default function AnalyzeScript() {
       });
 
       const data = await res.json();
-
       setAnalysis(data.analysis || data.error || "No analysis returned.");
     } catch (error: any) {
       setAnalysis(error?.message || "Analysis failed.");
