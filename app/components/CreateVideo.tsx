@@ -81,6 +81,7 @@ export default function CreateVideo({
   const [videoUrl, setVideoUrl] = useState("");
   const [videoType, setVideoType] = useState("video/webm");
   const [grayBackground, setGrayBackground] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState("");
 
   const [actorName, setActorName] = useState("");
   const [roleName, setRoleName] = useState("");
@@ -90,6 +91,7 @@ export default function CreateVideo({
 
   useEffect(() => {
     setIndex(0);
+    setVoiceStatus("");
   }, [script, myRole, voiceRole]);
 
   useEffect(() => {
@@ -101,55 +103,71 @@ export default function CreateVideo({
 
   async function readVoiceLine(lineIndex: number) {
     const cue = cues[lineIndex];
-    if (!cue || cue.role !== voiceRole) return;
 
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+    if (!cue) {
+      setVoiceStatus("No line found.");
+      return;
     }
 
-    const res = await fetch("/api/tts", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ text: cue.text }),
-    });
+    if (cue.role !== voiceRole) {
+      setVoiceStatus(`Waiting for you to read: ${cue.role}`);
+      return;
+    }
 
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
+    try {
+      setVoiceStatus(`AI reading: ${cue.role}`);
 
-    audioRef.current = audio;
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
 
-    audio.onended = () => {
-      const next = lineIndex + 1;
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: cue.text }),
+      });
 
-      if (next < cues.length) {
+      if (!res.ok) {
+        const errorText = await res.text();
+        setVoiceStatus(`Voice error: ${errorText || "TTS failed"}`);
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        const next = lineIndex + 1;
+
+        if (next >= cues.length) {
+          setVoiceStatus("End of script.");
+          return;
+        }
+
         setIndex(next);
 
         const nextCue = cues[next];
 
-        // If next line is also voice, continue automatically.
-        // If next line is your role, stop and wait for you to read.
         if (nextCue.role === voiceRole) {
           setTimeout(() => readVoiceLine(next), 500);
+        } else {
+          setVoiceStatus(`Your turn: ${nextCue.role}`);
         }
-      }
-    };
+      };
 
-    audio.play();
-  }
+      audio.onerror = () => {
+        setVoiceStatus("Voice playback failed.");
+      };
 
-  function startFromCurrentLine() {
-    const cue = cues[index];
-
-    if (!cue) return;
-
-    // If AI voice has this line, read it.
-    // If your role has this line, do nothing and wait for you.
-    if (cue.role === voiceRole) {
-      readVoiceLine(index);
+      await audio.play();
+    } catch (error: any) {
+      setVoiceStatus(error?.message || "Voice failed.");
     }
   }
 
@@ -158,8 +176,12 @@ export default function CreateVideo({
     setIndex(next);
 
     setTimeout(() => {
-      if (cues[next]?.role === voiceRole) {
+      const cue = cues[next];
+
+      if (cue?.role === voiceRole) {
         readVoiceLine(next);
+      } else if (cue) {
+        setVoiceStatus(`Your turn: ${cue.role}`);
       }
     }, 250);
   }
@@ -172,14 +194,19 @@ export default function CreateVideo({
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
+
+    const cue = cues[previous];
+    setVoiceStatus(cue ? `Moved to: ${cue.role}` : "");
   }
 
   function pauseVoice() {
     audioRef.current?.pause();
+    setVoiceStatus("Voice paused.");
   }
 
   function resumeVoice() {
     audioRef.current?.play();
+    setVoiceStatus("Voice resumed.");
   }
 
   function stopVoice() {
@@ -187,6 +214,7 @@ export default function CreateVideo({
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
+    setVoiceStatus("Voice stopped.");
   }
 
   function drawCanvas() {
@@ -225,6 +253,7 @@ export default function CreateVideo({
     setRecording(true);
     setVideoUrl("");
     setIndex(0);
+    setVoiceStatus("Starting video...");
 
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -287,10 +316,16 @@ export default function CreateVideo({
     setTimeout(() => {
       const firstCue = cues[0];
 
-      if (firstCue?.role === voiceRole) {
-        readVoiceLine(0);
+      if (!firstCue) {
+        setVoiceStatus("No dialogue found.");
+        return;
       }
-      // If first line is your role, it waits for you.
+
+      if (firstCue.role === voiceRole) {
+        readVoiceLine(0);
+      } else {
+        setVoiceStatus(`Your turn: ${firstCue.role}`);
+      }
     }, 700);
   }
 
@@ -375,7 +410,9 @@ export default function CreateVideo({
         })}
       </div>
 
-      <br />
+      <p style={{ minHeight: 24 }}>
+        <strong>Status:</strong> {voiceStatus || "Ready."}
+      </p>
 
       <button onClick={previousLine}>Previous line</button>
 
@@ -422,7 +459,7 @@ export default function CreateVideo({
           checked={grayBackground}
           onChange={(e) => setGrayBackground(e.target.checked)}
         />{" "}
-        Add gray background to horizontal video
+        Add gray background behind horizontal video
       </label>
 
       <br />
@@ -468,7 +505,7 @@ export default function CreateVideo({
       )}
 
       <p style={{ fontSize: 13, opacity: 0.8 }}>
-        Recording is horizontal 16:9. MP4 depends on browser support; otherwise it saves as WEBM.
+        The gray option adds gray behind the camera image. Replacing your room background needs person-background removal.
       </p>
     </section>
   );
