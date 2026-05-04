@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Cue = {
   role: string;
@@ -73,11 +73,14 @@ export default function CreateVideo({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const animationRef = useRef<number | null>(null);
 
   const [index, setIndex] = useState(0);
   const [recording, setRecording] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
+  const [videoType, setVideoType] = useState("video/webm");
   const [grayBackground, setGrayBackground] = useState(false);
+  const [handsFree, setHandsFree] = useState(true);
 
   const [actorName, setActorName] = useState("");
   const [roleName, setRoleName] = useState("");
@@ -85,7 +88,11 @@ export default function CreateVideo({
 
   const cues = parseCues(script, roles);
 
-  async function read(text: string) {
+  useEffect(() => {
+    setIndex(0);
+  }, [script, myRole, voiceRole]);
+
+  async function read(text: string, afterEnd?: () => void) {
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
@@ -104,28 +111,84 @@ export default function CreateVideo({
     const audio = new Audio(url);
 
     audioRef.current = audio;
+
+    audio.onended = () => {
+      if (afterEnd) afterEnd();
+    };
+
     audio.play();
   }
 
-  function readIfVoice(i: number) {
-    const cue = cues[i];
-    if (cue?.role === voiceRole) read(cue.text);
+  function goToLine(newIndex: number, autoPlay = true) {
+    const safeIndex = Math.max(0, Math.min(newIndex, cues.length - 1));
+    setIndex(safeIndex);
+
+    if (!autoPlay) return;
+
+    const cue = cues[safeIndex];
+
+    if (cue?.role === voiceRole) {
+      read(cue.text, () => {
+        if (handsFree && safeIndex < cues.length - 1) {
+          setTimeout(() => goToLine(safeIndex + 1, true), 500);
+        }
+      });
+    }
   }
 
   function nextLine() {
-    const next = Math.min(index + 1, cues.length - 1);
-    setIndex(next);
-    setTimeout(() => readIfVoice(next), 200);
+    goToLine(index + 1, true);
   }
 
   function previousLine() {
-    const prev = Math.max(index - 1, 0);
-    setIndex(prev);
-    setTimeout(() => readIfVoice(prev), 200);
+    goToLine(index - 1, true);
   }
 
   function pauseVoice() {
     audioRef.current?.pause();
+  }
+
+  function resumeVoice() {
+    audioRef.current?.play();
+  }
+
+  function stopVoice() {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+  }
+
+  function drawCanvas() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    if (!video || !canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const canvasW = canvas.width;
+    const canvasH = canvas.height;
+
+    ctx.fillStyle = grayBackground ? "#9ca3af" : "#000000";
+    ctx.fillRect(0, 0, canvasW, canvasH);
+
+    if (video.videoWidth && video.videoHeight) {
+      const scale = Math.min(
+        canvasW / video.videoWidth,
+        canvasH / video.videoHeight
+      );
+
+      const drawW = video.videoWidth * scale;
+      const drawH = video.videoHeight * scale;
+      const x = (canvasW - drawW) / 2;
+      const y = (canvasH - drawH) / 2;
+
+      ctx.drawImage(video, x, y, drawW, drawH);
+    }
+
+    animationRef.current = requestAnimationFrame(drawCanvas);
   }
 
   async function startVideo() {
@@ -147,20 +210,7 @@ export default function CreateVideo({
     canvas.width = 1280;
     canvas.height = 720;
 
-    const ctx = canvas.getContext("2d")!;
-
-    function draw() {
-      ctx.fillStyle = grayBackground ? "#9ca3af" : "#000";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      if (videoRef.current?.videoWidth) {
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-      }
-
-      requestAnimationFrame(draw);
-    }
-
-    draw();
+    drawCanvas();
 
     const canvasStream = canvas.captureStream(30);
     const finalStream = new MediaStream([
@@ -168,40 +218,90 @@ export default function CreateVideo({
       ...stream.getAudioTracks(),
     ]);
 
+    let mimeType = "video/webm";
+
+    if (MediaRecorder.isTypeSupported("video/mp4")) {
+      mimeType = "video/mp4";
+    } else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) {
+      mimeType = "video/webm;codecs=vp9";
+    }
+
+    setVideoType(mimeType);
+
     const chunks: BlobPart[] = [];
-    const recorder = new MediaRecorder(finalStream);
+    const recorder = new MediaRecorder(finalStream, { mimeType });
 
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) chunks.push(e.data);
     };
 
     recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: "video/webm" });
+      const blob = new Blob(chunks, { type: mimeType });
       setVideoUrl(URL.createObjectURL(blob));
+
       stream.getTracks().forEach((t) => t.stop());
+
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
     };
 
     recorderRef.current = recorder;
     recorder.start();
 
-    setTimeout(() => readIfVoice(0), 700);
+    setTimeout(() => {
+      goToLine(0, true);
+    }, 700);
   }
 
   function stopVideo() {
     setRecording(false);
+    stopVoice();
     recorderRef.current?.stop();
   }
 
+  const extension = videoType.includes("mp4") ? "mp4" : "webm";
+
   return (
-    <section style={{ flex: "1 1 420px", background: "#111827", padding: 24, borderRadius: 24, color: "#fff" }}>
+    <section
+      style={{
+        flex: "1 1 420px",
+        background: "#111827",
+        padding: 24,
+        borderRadius: 24,
+        color: "#fff",
+      }}
+    >
       <div style={{ textAlign: "center", marginBottom: 20 }}>
-        <div style={{ width: 86, height: 86, borderRadius: "50%", background: "#ef4444", margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 38 }}>
+        <div
+          style={{
+            width: 86,
+            height: 86,
+            borderRadius: "50%",
+            background: "#ef4444",
+            margin: "0 auto",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 38,
+          }}
+        >
           🎥
         </div>
         <h2>Create Video</h2>
       </div>
 
-      <div style={{ height: 260, overflowY: "auto", background: "#000", padding: 12, borderRadius: 12 }}>
+      <div
+        style={{
+          height: 260,
+          overflowY: "auto",
+          background: "#000",
+          padding: 12,
+          borderRadius: 12,
+        }}
+      >
+        {cues.length === 0 && <p>No dialogue loaded yet.</p>}
+
         {cues.map((cue, i) => (
           <div
             key={i}
@@ -216,38 +316,94 @@ export default function CreateVideo({
                     : "#1d4ed8"
                   : "#333",
               border: i === index ? "3px solid white" : "none",
+              opacity: i === index ? 1 : 0.6,
             }}
           >
             <strong>{cue.role}</strong>
-            <p>{cue.text}</p>
+            <p style={{ fontSize: i === index ? 22 : 16 }}>{cue.text}</p>
           </div>
         ))}
       </div>
 
       <br />
 
+      <label>
+        <input
+          type="checkbox"
+          checked={handsFree}
+          onChange={(e) => setHandsFree(e.target.checked)}
+        />{" "}
+        Hands-free auto-advance
+      </label>
+
+      <br />
+      <br />
+
       <button onClick={previousLine}>Previous line</button>
-      <button onClick={pauseVoice} style={{ marginLeft: 10 }}>Pause</button>
-      <button onClick={nextLine} style={{ marginLeft: 10 }}>Next line</button>
+
+      <button onClick={pauseVoice} style={{ marginLeft: 10 }}>
+        Pause
+      </button>
+
+      <button onClick={resumeVoice} style={{ marginLeft: 10 }}>
+        Resume
+      </button>
+
+      <button onClick={nextLine} style={{ marginLeft: 10 }}>
+        Next line
+      </button>
 
       <h3>Recording details</h3>
 
-      <input placeholder="Your Name" value={actorName} onChange={(e) => setActorName(e.target.value)} />
-      <input placeholder="Role Name" value={roleName} onChange={(e) => setRoleName(e.target.value)} style={{ marginLeft: 10 }} />
-      <input placeholder="Agency" value={agency} onChange={(e) => setAgency(e.target.value)} style={{ marginLeft: 10 }} />
+      <input
+        placeholder="Your Name"
+        value={actorName}
+        onChange={(e) => setActorName(e.target.value)}
+      />
 
-      <br /><br />
+      <input
+        placeholder="Role Name"
+        value={roleName}
+        onChange={(e) => setRoleName(e.target.value)}
+        style={{ marginLeft: 10 }}
+      />
+
+      <input
+        placeholder="Agency"
+        value={agency}
+        onChange={(e) => setAgency(e.target.value)}
+        style={{ marginLeft: 10 }}
+      />
+
+      <br />
+      <br />
 
       <label>
-        <input type="checkbox" checked={grayBackground} onChange={(e) => setGrayBackground(e.target.checked)} /> Add gray background
+        <input
+          type="checkbox"
+          checked={grayBackground}
+          onChange={(e) => setGrayBackground(e.target.checked)}
+        />{" "}
+        Add gray background to video
       </label>
 
-      <br /><br />
+      <br />
+      <br />
 
-      <video ref={videoRef} autoPlay muted style={{ display: "none" }} />
-      <canvas ref={canvasRef} style={{ width: 360, borderRadius: 12 }} />
+      <video ref={videoRef} autoPlay muted playsInline style={{ display: "none" }} />
 
-      <br /><br />
+      <canvas
+        ref={canvasRef}
+        style={{
+          width: 360,
+          maxWidth: "100%",
+          background: grayBackground ? "#9ca3af" : "#000",
+          borderRadius: 12,
+        }}
+      />
+
+      <br />
+      <br />
 
       {!recording ? (
         <button onClick={startVideo}>Start Video</button>
@@ -259,10 +415,15 @@ export default function CreateVideo({
         <p>
           <a
             href={videoUrl}
-            download={`${actorName}_${roleName}_${agency}.webm`}
+            download={`${(actorName || "actor").replace(/\s+/g, "_")}_${(
+              roleName || myRole || "role"
+            ).replace(/\s+/g, "_")}_${(agency || "agency").replace(
+              /\s+/g,
+              "_"
+            )}.${extension}`}
             style={{ color: "#fff" }}
           >
-            Download Video
+            Download Video ({extension.toUpperCase()})
           </a>
         </p>
       )}
