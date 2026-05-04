@@ -1,41 +1,38 @@
 import { NextResponse } from "next/server";
+import mammoth from "mammoth";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
-    const { script, myRole, voiceRole } = await req.json();
+    const formData = await req.formData();
+    const file = formData.get("file") as File | null;
 
-    if (!script) {
-      return NextResponse.json({ error: "No script provided" }, { status: 400 });
+    if (!file) {
+      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     }
 
-    const analysis = `
-TONE:
-The scene feels tense, emotional, and uncertain.
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const name = file.name.toLowerCase();
 
-YOUR ROLE (${myRole || "selected role"}):
-Play it truthfully. Listen carefully, react naturally, and let the emotion build.
+    let text = "";
 
-VOICE ROLE (${voiceRole || "voice role"}):
-The voice should support the rhythm of the scene without overpowering your performance.
+    if (name.endsWith(".docx")) {
+      const result = await mammoth.extractRawText({ buffer });
+      text = result.value;
+    } else if (name.endsWith(".txt")) {
+      text = buffer.toString("utf-8");
+    } else {
+      return NextResponse.json(
+        { error: "Only .docx and .txt files are supported." },
+        { status: 400 }
+      );
+    }
 
-SUBTEXT:
-There is fear, pressure, or conflict beneath the words.
-
-PACING:
-Do not rush. Let key moments breathe.
-
-KEY MOMENTS:
-- Emotional shifts
-- Confrontation lines
-- Final reaction
-`;
-
-    return NextResponse.json({ analysis });
+    return NextResponse.json({ text });
   } catch (error: any) {
     return NextResponse.json(
-      { error: error?.message || "Failed to analyze script" },
+      { error: error?.message || "Failed to process file" },
       { status: 500 }
     );
   }
