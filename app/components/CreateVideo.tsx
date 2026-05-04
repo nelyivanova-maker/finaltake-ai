@@ -1,6 +1,18 @@
 "use client";
 
-export default function CreateVideo() {
+type CreateVideoProps = {
+  script: string;
+  roles: string[];
+  myRole: string;
+  voiceRole: string;
+};
+
+export default function CreateVideo({
+  script,
+  roles,
+  myRole,
+  voiceRole,
+}: CreateVideoProps) {
   return (
     <section
       style={{
@@ -31,7 +43,21 @@ export default function CreateVideo() {
         <h2>Create Video</h2>
       </div>
 
-      <p>Video section restored. Next we will connect it to the script and roles.</p>
+      <p>
+        Script loaded: <strong>{script ? "Yes" : "No"}</strong>
+      </p>
+
+      <p>
+        Your role: <strong>{myRole || "None"}</strong>
+      </p>
+
+      <p>
+        Voice reads: <strong>{voiceRole || "None"}</strong>
+      </p>
+
+      <p>
+        Roles: <strong>{roles.length ? roles.join(", ") : "None"}</strong>
+      </p>
     </section>
   );
 }
