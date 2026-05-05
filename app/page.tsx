@@ -3,6 +3,7 @@
 import { useState } from "react";
 import AnalyzeScript from "./components/AnalyzeScript";
 import CreateVideo from "./components/CreateVideo";
+import InstallAppButton from "./components/InstallAppButton";
 
 export default function Page() {
   const [script, setScript] = useState("");
@@ -24,11 +25,14 @@ export default function Page() {
           color: "#fff",
           fontSize: "clamp(28px, 6vw, 44px)",
           textAlign: "center",
-          marginBottom: 20,
+          marginBottom: 10,
         }}
       >
         🎬 FinalTake AI
       </h1>
+
+      {/* INSTALL BUTTON */}
+      <InstallAppButton />
 
       <div
         style={{
