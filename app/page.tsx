@@ -15,12 +15,30 @@ export default function Page() {
       style={{
         background: "#064e3b",
         minHeight: "100vh",
-        padding: 24,
+        padding: "16px",
+        boxSizing: "border-box",
       }}
     >
-      <h1 style={{ color: "#fff" }}>🎬 FinalTake AI</h1>
+      <h1
+        style={{
+          color: "#fff",
+          fontSize: "clamp(28px, 6vw, 44px)",
+          textAlign: "center",
+          marginBottom: 20,
+        }}
+      >
+        🎬 FinalTake AI
+      </h1>
 
-      <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+          gap: 20,
+          maxWidth: 1200,
+          margin: "0 auto",
+        }}
+      >
         <AnalyzeScript
           script={script}
           setScript={setScript}
