@@ -1,6 +1,6 @@
 {
   "name": "finaltake-ai",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,15 +8,10 @@
     "start": "next start"
   },
   "dependencies": {
-    "next": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "mammoth": "latest",
-    "pdf-parse": "latest"
-  },
-  "devDependencies": {
-    "typescript": "latest",
-    "@types/react": "latest",
-    "@types/node": "latest"
+    "@mediapipe/selfie_segmentation": "^0.1.1632777926",
+    "mammoth": "^1.6.0",
+    "next": "14.2.5",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
   }
 }
