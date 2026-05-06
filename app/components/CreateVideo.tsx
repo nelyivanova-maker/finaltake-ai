@@ -15,7 +15,14 @@ type Props = {
 };
 
 function cleanRole(line: string) {
-  return line.toUpperCase().replace(/:$/, "").trim();
+  return line
+    .replace(/\(CONT'D\)/gi, "")
+    .replace(/\(CONT’D\)/gi, "")
+    .replace(/\(O\.C\.\)/gi, "")
+    .replace(/\(V\.O\.\)/gi, "")
+    .replace(/:$/, "")
+    .trim()
+    .toUpperCase();
 }
 
 function parseCues(text: string, roles: string[]) {
@@ -65,15 +72,28 @@ export default function CreateVideo({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const animationRef = useRef<number | null>(null);
   const cueRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const [index, setIndex] = useState(0);
   const [recording, setRecording] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
+  const [status, setStatus] = useState("Ready.");
   const [grayBackground, setGrayBackground] = useState(false);
-  const [status, setStatus] = useState("");
+  const [cameraFacing, setCameraFacing] = useState<"user" | "environment">("user");
+
+  const [actorName, setActorName] = useState("");
+  const [roleName, setRoleName] = useState("");
+  const [agency, setAgency] = useState("");
 
   const cues = parseCues(script, roles);
+
+  useEffect(() => {
+    setIndex(0);
+    setStatus("Ready.");
+  }, [script, myRole, voiceRole]);
 
   useEffect(() => {
     cueRefs.current[index]?.scrollIntoView({
@@ -82,12 +102,10 @@ export default function CreateVideo({
     });
   }, [index]);
 
-  /* ---------- VOICE (WORKING ON PHONE) ---------- */
   function speak(text: string, lineIndex: number) {
     window.speechSynthesis.cancel();
 
     const utter = new SpeechSynthesisUtterance(text);
-
     utter.rate = 0.95;
     utter.pitch = 1;
     utter.volume = 1;
@@ -101,178 +119,402 @@ export default function CreateVideo({
         const nextCue = cues[next];
 
         if (nextCue.role === voiceRole) {
-          setTimeout(() => speak(nextCue.text, next), 400);
+          setTimeout(() => speak(nextCue.text, next), 500);
         } else {
-          setStatus("Your turn");
+          setStatus(`Your turn: ${nextCue.role}`);
         }
+      } else {
+        setStatus("End of script.");
       }
     };
 
+    setStatus("AI voice reading...");
     window.speechSynthesis.speak(utter);
+  }
+
+  function playLineIfVoice(lineIndex: number) {
+    const cue = cues[lineIndex];
+
+    if (!cue) {
+      setStatus("No line found.");
+      return;
+    }
+
+    if (cue.role === voiceRole) {
+      speak(cue.text, lineIndex);
+    } else {
+      setStatus(`Your turn: ${cue.role}`);
+    }
   }
 
   function nextLine() {
     const next = Math.min(index + 1, cues.length - 1);
     setIndex(next);
+    window.speechSynthesis.cancel();
 
-    const cue = cues[next];
-
-    if (cue?.role === voiceRole) {
-      setTimeout(() => speak(cue.text, next), 300);
-    } else {
-      setStatus("Your turn");
-    }
+    setTimeout(() => {
+      playLineIfVoice(next);
+    }, 250);
   }
 
   function previousLine() {
     const prev = Math.max(index - 1, 0);
     setIndex(prev);
     window.speechSynthesis.cancel();
+    setStatus("Moved to previous line.");
   }
 
   function pauseVoice() {
     window.speechSynthesis.pause();
+    setStatus("Voice paused.");
   }
 
   function resumeVoice() {
     window.speechSynthesis.resume();
+    setStatus("Voice resumed.");
   }
 
-  /* ---------- VIDEO ---------- */
-  async function startVideo() {
-    setRecording(true);
-    setVideoUrl("");
-    setIndex(0);
+  function drawCanvas() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    if (!video || !canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.fillStyle = grayBackground ? "#9ca3af" : "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (video.videoWidth && video.videoHeight) {
+      const scale = Math.min(
+        canvas.width / video.videoWidth,
+        canvas.height / video.videoHeight
+      );
+
+      const w = video.videoWidth * scale;
+      const h = video.videoHeight * scale;
+      const x = (canvas.width - w) / 2;
+      const y = (canvas.height - h) / 2;
+
+      ctx.drawImage(video, x, y, w, h);
+    }
+
+    animationRef.current = requestAnimationFrame(drawCanvas);
+  }
+
+  async function startCamera() {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
 
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 1920, height: 1080, facingMode: "user" },
+      video: {
+        facingMode: cameraFacing,
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
       audio: true,
     });
+
+    streamRef.current = stream;
 
     if (videoRef.current) {
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
     }
 
-    const canvas = canvasRef.current!;
-    canvas.width = 1920;
-    canvas.height = 1080;
-
-    const ctx = canvas.getContext("2d")!;
-
-    function draw() {
-      ctx.fillStyle = grayBackground ? "#9ca3af" : "#000";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      ctx.drawImage(videoRef.current!, 0, 0, canvas.width, canvas.height);
-
-      requestAnimationFrame(draw);
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.width = 1920;
+      canvas.height = 1080;
     }
 
-    draw();
+    drawCanvas();
 
-    const canvasStream = canvas.captureStream(30);
-    const finalStream = new MediaStream([
-      ...canvasStream.getVideoTracks(),
-      ...stream.getAudioTracks(),
-    ]);
+    return stream;
+  }
 
-    const chunks: BlobPart[] = [];
-    const recorder = new MediaRecorder(finalStream);
+  async function switchCamera() {
+    if (recording) {
+      setStatus("Stop video before switching camera.");
+      return;
+    }
 
-    recorder.ondataavailable = (e) => chunks.push(e.data);
+    const nextCamera = cameraFacing === "user" ? "environment" : "user";
+    setCameraFacing(nextCamera);
+    setStatus(nextCamera === "user" ? "Front camera selected." : "Back camera selected.");
+  }
 
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: "video/webm" });
-      setVideoUrl(URL.createObjectURL(blob));
-      stream.getTracks().forEach((t) => t.stop());
-    };
+  async function startVideo() {
+    if (cues.length === 0) {
+      setStatus("Load a script first.");
+      return;
+    }
 
-    recorderRef.current = recorder;
-    recorder.start();
+    setRecording(true);
+    setPaused(false);
+    setVideoUrl("");
+    setIndex(0);
+    setStatus("Starting video...");
 
-    setTimeout(() => {
-      const first = cues[0];
+    try {
+      const stream = await startCamera();
 
-      if (first?.role === voiceRole) {
-        speak(first.text, 0);
-      } else {
-        setStatus("Your turn");
-      }
-    }, 700);
+      const canvas = canvasRef.current!;
+      const canvasStream = canvas.captureStream(30);
+
+      const finalStream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...stream.getAudioTracks(),
+      ]);
+
+      const chunks: BlobPart[] = [];
+
+      const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+        ? "video/webm;codecs=vp9"
+        : "video/webm";
+
+      const recorder = new MediaRecorder(finalStream, { mimeType });
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: "video/webm" });
+        setVideoUrl(URL.createObjectURL(blob));
+
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+
+        if (animationRef.current) {
+          cancelAnimationFrame(animationRef.current);
+        }
+      };
+
+      recorderRef.current = recorder;
+      recorder.start();
+
+      setTimeout(() => {
+        playLineIfVoice(0);
+      }, 800);
+    } catch (error: any) {
+      setRecording(false);
+      setStatus(error?.message || "Could not start camera.");
+    }
+  }
+
+  function pauseVideo() {
+    if (!recorderRef.current || recorderRef.current.state !== "recording") return;
+
+    recorderRef.current.pause();
+    setPaused(true);
+    window.speechSynthesis.pause();
+    setStatus("Video paused.");
+  }
+
+  function resumeVideo() {
+    if (!recorderRef.current || recorderRef.current.state !== "paused") return;
+
+    recorderRef.current.resume();
+    setPaused(false);
+    window.speechSynthesis.resume();
+    setStatus("Video resumed.");
   }
 
   function stopVideo() {
     setRecording(false);
+    setPaused(false);
     window.speechSynthesis.cancel();
-    recorderRef.current?.stop();
+
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      recorderRef.current.stop();
+    }
+
+    setStatus("Video stopped.");
   }
 
-  return (
-    <section style={{ flex: 1, background: "#111827", padding: 24, borderRadius: 24, color: "#fff" }}>
-      <h2>🎥 Create Video</h2>
+  const filename = `${(actorName || "actor").replace(/\s+/g, "_")}_${(
+    roleName || myRole || "role"
+  ).replace(/\s+/g, "_")}_${(agency || "agency").replace(/\s+/g, "_")}.webm`;
 
-      <div style={{ height: 300, overflowY: "auto", background: "#000", padding: 10 }}>
-        {cues.map((cue, i) => (
-          <div
-            key={i}
-            ref={(el) => (cueRefs.current[i] = el)}
-            style={{
-              padding: 10,
-              marginBottom: 6,
-              background:
-                i === index
-                  ? cue.role === myRole
-                    ? "green"
-                    : "blue"
-                  : "#333",
-              opacity: i === index ? 1 : 0.5,
-            }}
-          >
-            <b>{cue.role}</b>
-            <p>{cue.text}</p>
-          </div>
-        ))}
+  return (
+    <section
+      style={{
+        flex: "1 1 420px",
+        background: "#111827",
+        padding: 24,
+        borderRadius: 24,
+        color: "#fff",
+      }}
+    >
+      <div style={{ textAlign: "center", marginBottom: 20 }}>
+        <div
+          style={{
+            width: 86,
+            height: 86,
+            borderRadius: "50%",
+            background: "#ef4444",
+            margin: "0 auto",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 38,
+          }}
+        >
+          🎥
+        </div>
+
+        <h2>Create Video</h2>
       </div>
 
-      <p>Status: {status}</p>
+      <div
+        style={{
+          height: 300,
+          overflowY: "auto",
+          background: "#000",
+          padding: 12,
+          borderRadius: 12,
+        }}
+      >
+        {cues.length === 0 && <p>No dialogue loaded yet.</p>}
 
-      <button onClick={previousLine}>Previous</button>
-      <button onClick={pauseVoice} style={{ marginLeft: 10 }}>Pause</button>
-      <button onClick={resumeVoice} style={{ marginLeft: 10 }}>Resume</button>
-      <button onClick={nextLine} style={{ marginLeft: 10 }}>Next</button>
+        {cues.map((cue, i) => {
+          const isCurrent = i === index;
+          const isMine = cue.role === myRole;
+          const isVoice = cue.role === voiceRole;
 
-      <br /><br />
+          return (
+            <div
+              key={i}
+              ref={(el) => {
+                cueRefs.current[i] = el;
+              }}
+              style={{
+                padding: isCurrent ? 18 : 12,
+                marginBottom: 10,
+                borderRadius: 8,
+                background: isCurrent
+                  ? isMine
+                    ? "#166534"
+                    : isVoice
+                    ? "#1d4ed8"
+                    : "#374151"
+                  : "#333",
+                border: isCurrent ? "3px solid white" : "none",
+                opacity: isCurrent ? 1 : 0.5,
+              }}
+            >
+              <strong>{cue.role}</strong>
+              <p style={{ fontSize: isCurrent ? 24 : 16 }}>{cue.text}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      <p>
+        <strong>Status:</strong> {status}
+      </p>
+
+      <button onClick={previousLine}>Previous Line</button>
+
+      <button onClick={nextLine} style={{ marginLeft: 10 }}>
+        Next Line
+      </button>
+
+      <button onClick={pauseVoice} style={{ marginLeft: 10 }}>
+        Pause Voice
+      </button>
+
+      <button onClick={resumeVoice} style={{ marginLeft: 10 }}>
+        Resume Voice
+      </button>
+
+      <h3>Recording details</h3>
+
+      <input
+        placeholder="Your Name"
+        value={actorName}
+        onChange={(e) => setActorName(e.target.value)}
+      />
+
+      <input
+        placeholder="Role Name"
+        value={roleName}
+        onChange={(e) => setRoleName(e.target.value)}
+        style={{ marginLeft: 10 }}
+      />
+
+      <input
+        placeholder="Agency"
+        value={agency}
+        onChange={(e) => setAgency(e.target.value)}
+        style={{ marginLeft: 10 }}
+      />
+
+      <br />
+      <br />
+
+      <button onClick={switchCamera}>
+        Use {cameraFacing === "user" ? "Back" : "Front"} Camera
+      </button>
+
+      <p>Selected camera: {cameraFacing === "user" ? "Front" : "Back"}</p>
 
       <label>
         <input
           type="checkbox"
           checked={grayBackground}
           onChange={(e) => setGrayBackground(e.target.checked)}
-        />
-        Gray background (frame)
+        />{" "}
+        Gray background behind video frame
       </label>
 
-      <br /><br />
+      <br />
+      <br />
 
-      <video ref={videoRef} autoPlay muted style={{ display: "none" }} />
-      <canvas ref={canvasRef} style={{ width: "100%", aspectRatio: "16/9" }} />
+      <video ref={videoRef} autoPlay muted playsInline style={{ display: "none" }} />
 
+      <canvas
+        ref={canvasRef}
+        style={{
+          width: "100%",
+          maxWidth: 520,
+          aspectRatio: "16 / 9",
+          background: grayBackground ? "#9ca3af" : "#000",
+          borderRadius: 12,
+        }}
+      />
+
+      <br />
       <br />
 
       {!recording ? (
         <button onClick={startVideo}>Start Video</button>
       ) : (
-        <button onClick={stopVideo}>Stop Video</button>
+        <>
+          {!paused ? (
+            <button onClick={pauseVideo}>Pause Video</button>
+          ) : (
+            <button onClick={resumeVideo}>Resume Video</button>
+          )}
+
+          <button onClick={stopVideo} style={{ marginLeft: 10 }}>
+            Stop Video
+          </button>
+        </>
       )}
 
       {videoUrl && (
         <p>
-          <a href={videoUrl} download="video.webm" style={{ color: "#fff" }}>
+          <a href={videoUrl} download={filename} style={{ color: "#fff" }}>
             Download Video
           </a>
         </p>
       )}
+
+      <p style={{ fontSize: 13, opacity: 0.8 }}>
+        Video records in horizontal 16:9 WebM. MP4 export will need a server conversion step later.
+      </p>
     </section>
   );
 }
