@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { SelfieSegmentation } from "@mediapipe/selfie_segmentation";
 
 type Cue = {
   role: string;
@@ -65,41 +64,51 @@ export default function CreateVideo({
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const cueRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const [index, setIndex] = useState(0);
   const [recording, setRecording] = useState(false);
-  const [camera, setCamera] = useState<"user" | "environment">("user");
+  const [videoUrl, setVideoUrl] = useState("");
+  const [grayBackground, setGrayBackground] = useState(false);
   const [status, setStatus] = useState("");
 
   const cues = parseCues(script, roles);
 
-  /* ---------- VOICE ---------- */
-  async function speak(text: string) {
-    try {
-      const res = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
+  useEffect(() => {
+    cueRefs.current[index]?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }, [index]);
 
-      if (!res.ok) throw new Error("TTS failed");
+  /* ---------- VOICE (WORKING ON PHONE) ---------- */
+  function speak(text: string, lineIndex: number) {
+    window.speechSynthesis.cancel();
 
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
+    const utter = new SpeechSynthesisUtterance(text);
 
-      audioRef.current = audio;
+    utter.rate = 0.95;
+    utter.pitch = 1;
+    utter.volume = 1;
 
-      audio.onended = () => nextLine();
+    utter.onend = () => {
+      const next = lineIndex + 1;
 
-      await audio.play();
-    } catch {
-      // fallback to browser voice
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.onend = () => nextLine();
-      speechSynthesis.speak(utter);
-    }
+      if (next < cues.length) {
+        setIndex(next);
+
+        const nextCue = cues[next];
+
+        if (nextCue.role === voiceRole) {
+          setTimeout(() => speak(nextCue.text, next), 400);
+        } else {
+          setStatus("Your turn");
+        }
+      }
+    };
+
+    window.speechSynthesis.speak(utter);
   }
 
   function nextLine() {
@@ -107,17 +116,36 @@ export default function CreateVideo({
     setIndex(next);
 
     const cue = cues[next];
+
     if (cue?.role === voiceRole) {
-      setTimeout(() => speak(cue.text), 400);
+      setTimeout(() => speak(cue.text, next), 300);
     } else {
       setStatus("Your turn");
     }
   }
 
-  /* ---------- CAMERA ---------- */
-  async function startCamera() {
+  function previousLine() {
+    const prev = Math.max(index - 1, 0);
+    setIndex(prev);
+    window.speechSynthesis.cancel();
+  }
+
+  function pauseVoice() {
+    window.speechSynthesis.pause();
+  }
+
+  function resumeVoice() {
+    window.speechSynthesis.resume();
+  }
+
+  /* ---------- VIDEO ---------- */
+  async function startVideo() {
+    setRecording(true);
+    setVideoUrl("");
+    setIndex(0);
+
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: camera },
+      video: { width: 1920, height: 1080, facingMode: "user" },
       audio: true,
     });
 
@@ -125,91 +153,70 @@ export default function CreateVideo({
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
     }
-  }
 
-  /* ---------- BACKGROUND REMOVAL ---------- */
-  function startSegmentation() {
-    const video = videoRef.current!;
     const canvas = canvasRef.current!;
+    canvas.width = 1920;
+    canvas.height = 1080;
+
     const ctx = canvas.getContext("2d")!;
 
-    const segmenter = new SelfieSegmentation({
-      locateFile: (file) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`,
-    });
-
-    segmenter.setOptions({ modelSelection: 1 });
-
-    segmenter.onResults((results) => {
-      canvas.width = 1280;
-      canvas.height = 720;
-
-      ctx.fillStyle = "#9ca3af"; // gray background
+    function draw() {
+      ctx.fillStyle = grayBackground ? "#9ca3af" : "#000";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      ctx.globalCompositeOperation = "destination-atop";
-      ctx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(videoRef.current!, 0, 0, canvas.width, canvas.height);
 
-      ctx.globalCompositeOperation = "source-over";
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    });
-
-    async function loop() {
-      await segmenter.send({ image: video });
-      requestAnimationFrame(loop);
+      requestAnimationFrame(draw);
     }
 
-    loop();
-  }
+    draw();
 
-  /* ---------- START VIDEO ---------- */
-  async function startVideo() {
-    setRecording(true);
-    setIndex(0);
+    const canvasStream = canvas.captureStream(30);
+    const finalStream = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...stream.getAudioTracks(),
+    ]);
 
-    await startCamera();
-    startSegmentation();
+    const chunks: BlobPart[] = [];
+    const recorder = new MediaRecorder(finalStream);
+
+    recorder.ondataavailable = (e) => chunks.push(e.data);
+
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: "video/webm" });
+      setVideoUrl(URL.createObjectURL(blob));
+      stream.getTracks().forEach((t) => t.stop());
+    };
+
+    recorderRef.current = recorder;
+    recorder.start();
 
     setTimeout(() => {
       const first = cues[0];
 
       if (first?.role === voiceRole) {
-        speak(first.text);
+        speak(first.text, 0);
       } else {
         setStatus("Your turn");
       }
-    }, 800);
+    }, 700);
   }
 
-  /* ---------- UI ---------- */
+  function stopVideo() {
+    setRecording(false);
+    window.speechSynthesis.cancel();
+    recorderRef.current?.stop();
+  }
+
   return (
-    <section
-      style={{
-        flex: "1 1 420px",
-        background: "#111827",
-        padding: 24,
-        borderRadius: 24,
-        color: "#fff",
-      }}
-    >
+    <section style={{ flex: 1, background: "#111827", padding: 24, borderRadius: 24, color: "#fff" }}>
       <h2>🎥 Create Video</h2>
 
-      <button onClick={() => setCamera(camera === "user" ? "environment" : "user")}>
-        Switch Camera
-      </button>
-
-      <div
-        style={{
-          height: 260,
-          overflowY: "auto",
-          background: "#000",
-          marginTop: 10,
-          padding: 10,
-        }}
-      >
+      <div style={{ height: 300, overflowY: "auto", background: "#000", padding: 10 }}>
         {cues.map((cue, i) => (
           <div
             key={i}
+            ref={(el) => (cueRefs.current[i] = el)}
             style={{
               padding: 10,
               marginBottom: 6,
@@ -219,6 +226,7 @@ export default function CreateVideo({
                     ? "green"
                     : "blue"
                   : "#333",
+              opacity: i === index ? 1 : 0.5,
             }}
           >
             <b>{cue.role}</b>
@@ -229,15 +237,41 @@ export default function CreateVideo({
 
       <p>Status: {status}</p>
 
-      <video ref={videoRef} style={{ display: "none" }} />
-      <canvas ref={canvasRef} style={{ width: "100%", borderRadius: 12 }} />
+      <button onClick={previousLine}>Previous</button>
+      <button onClick={pauseVoice} style={{ marginLeft: 10 }}>Pause</button>
+      <button onClick={resumeVoice} style={{ marginLeft: 10 }}>Resume</button>
+      <button onClick={nextLine} style={{ marginLeft: 10 }}>Next</button>
+
+      <br /><br />
+
+      <label>
+        <input
+          type="checkbox"
+          checked={grayBackground}
+          onChange={(e) => setGrayBackground(e.target.checked)}
+        />
+        Gray background (frame)
+      </label>
+
+      <br /><br />
+
+      <video ref={videoRef} autoPlay muted style={{ display: "none" }} />
+      <canvas ref={canvasRef} style={{ width: "100%", aspectRatio: "16/9" }} />
 
       <br />
 
       {!recording ? (
         <button onClick={startVideo}>Start Video</button>
       ) : (
-        <button onClick={nextLine}>Next Line</button>
+        <button onClick={stopVideo}>Stop Video</button>
+      )}
+
+      {videoUrl && (
+        <p>
+          <a href={videoUrl} download="video.webm" style={{ color: "#fff" }}>
+            Download Video
+          </a>
+        </p>
       )}
     </section>
   );
