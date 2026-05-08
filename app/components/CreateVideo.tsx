@@ -75,6 +75,7 @@ export default function CreateVideo({
   const streamRef = useRef<MediaStream | null>(null);
   const animationRef = useRef<number | null>(null);
   const cueRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const [index, setIndex] = useState(0);
   const [recording, setRecording] = useState(false);
@@ -82,7 +83,9 @@ export default function CreateVideo({
   const [videoUrl, setVideoUrl] = useState("");
   const [status, setStatus] = useState("Ready.");
   const [grayBackground, setGrayBackground] = useState(false);
-  const [cameraFacing, setCameraFacing] = useState<"user" | "environment">("user");
+  const [cameraFacing, setCameraFacing] = useState<"user" | "environment">(
+    "user"
+  );
 
   const [actorName, setActorName] = useState("");
   const [roleName, setRoleName] = useState("");
@@ -102,34 +105,86 @@ export default function CreateVideo({
     });
   }, [index]);
 
-  function speak(text: string, lineIndex: number) {
+  async function speakWithOpenAI(text: string, lineIndex: number) {
+    try {
+      setStatus("AI voice loading...");
+
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(errorText || "TTS failed");
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        afterVoiceEnds(lineIndex);
+      };
+
+      audio.onerror = () => {
+        setStatus("AI voice playback failed. Using browser voice.");
+        speakWithBrowser(text, lineIndex);
+      };
+
+      setStatus("AI voice reading...");
+      await audio.play();
+    } catch (error: any) {
+      setStatus("AI voice failed. Using browser voice.");
+      speakWithBrowser(text, lineIndex);
+    }
+  }
+
+  function speakWithBrowser(text: string, lineIndex: number) {
     window.speechSynthesis.cancel();
 
     const utter = new SpeechSynthesisUtterance(text);
-    utter.rate = 0.95;
+    utter.rate = 0.9;
     utter.pitch = 1;
     utter.volume = 1;
 
     utter.onend = () => {
-      const next = lineIndex + 1;
-
-      if (next < cues.length) {
-        setIndex(next);
-
-        const nextCue = cues[next];
-
-        if (nextCue.role === voiceRole) {
-          setTimeout(() => speak(nextCue.text, next), 500);
-        } else {
-          setStatus(`Your turn: ${nextCue.role}`);
-        }
-      } else {
-        setStatus("End of script.");
-      }
+      afterVoiceEnds(lineIndex);
     };
 
-    setStatus("AI voice reading...");
+    setStatus("Browser voice reading...");
     window.speechSynthesis.speak(utter);
+  }
+
+  function afterVoiceEnds(lineIndex: number) {
+    const next = lineIndex + 1;
+
+    if (next >= cues.length) {
+      setStatus("End of script.");
+      return;
+    }
+
+    setIndex(next);
+
+    const nextCue = cues[next];
+
+    if (nextCue.role === voiceRole) {
+      setTimeout(() => {
+        speakWithOpenAI(nextCue.text, next);
+      }, 500);
+    } else {
+      setStatus(`Your turn: ${nextCue.role}`);
+    }
   }
 
   function playLineIfVoice(lineIndex: number) {
@@ -141,7 +196,7 @@ export default function CreateVideo({
     }
 
     if (cue.role === voiceRole) {
-      speak(cue.text, lineIndex);
+      speakWithOpenAI(cue.text, lineIndex);
     } else {
       setStatus(`Your turn: ${cue.role}`);
     }
@@ -150,6 +205,12 @@ export default function CreateVideo({
   function nextLine() {
     const next = Math.min(index + 1, cues.length - 1);
     setIndex(next);
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+
     window.speechSynthesis.cancel();
 
     setTimeout(() => {
@@ -160,16 +221,30 @@ export default function CreateVideo({
   function previousLine() {
     const prev = Math.max(index - 1, 0);
     setIndex(prev);
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+
     window.speechSynthesis.cancel();
     setStatus("Moved to previous line.");
   }
 
   function pauseVoice() {
+    if (audioRef.current && !audioRef.current.paused) {
+      audioRef.current.pause();
+    }
+
     window.speechSynthesis.pause();
     setStatus("Voice paused.");
   }
 
   function resumeVoice() {
+    if (audioRef.current && audioRef.current.paused) {
+      audioRef.current.play();
+    }
+
     window.speechSynthesis.resume();
     setStatus("Voice resumed.");
   }
@@ -223,6 +298,7 @@ export default function CreateVideo({
     }
 
     const canvas = canvasRef.current;
+
     if (canvas) {
       canvas.width = 1920;
       canvas.height = 1080;
@@ -233,7 +309,7 @@ export default function CreateVideo({
     return stream;
   }
 
-  async function switchCamera() {
+  function switchCamera() {
     if (recording) {
       setStatus("Stop video before switching camera.");
       return;
@@ -241,7 +317,12 @@ export default function CreateVideo({
 
     const nextCamera = cameraFacing === "user" ? "environment" : "user";
     setCameraFacing(nextCamera);
-    setStatus(nextCamera === "user" ? "Front camera selected." : "Back camera selected.");
+
+    setStatus(
+      nextCamera === "user"
+        ? "Front camera selected."
+        : "Back camera selected."
+    );
   }
 
   async function startVideo() {
@@ -296,7 +377,7 @@ export default function CreateVideo({
 
       setTimeout(() => {
         playLineIfVoice(0);
-      }, 800);
+      }, 900);
     } catch (error: any) {
       setRecording(false);
       setStatus(error?.message || "Could not start camera.");
@@ -304,26 +385,36 @@ export default function CreateVideo({
   }
 
   function pauseVideo() {
-    if (!recorderRef.current || recorderRef.current.state !== "recording") return;
+    if (!recorderRef.current || recorderRef.current.state !== "recording") {
+      return;
+    }
 
     recorderRef.current.pause();
     setPaused(true);
-    window.speechSynthesis.pause();
+    pauseVoice();
     setStatus("Video paused.");
   }
 
   function resumeVideo() {
-    if (!recorderRef.current || recorderRef.current.state !== "paused") return;
+    if (!recorderRef.current || recorderRef.current.state !== "paused") {
+      return;
+    }
 
     recorderRef.current.resume();
     setPaused(false);
-    window.speechSynthesis.resume();
+    resumeVoice();
     setStatus("Video resumed.");
   }
 
   function stopVideo() {
     setRecording(false);
     setPaused(false);
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+
     window.speechSynthesis.cancel();
 
     if (recorderRef.current && recorderRef.current.state !== "inactive") {
@@ -472,7 +563,13 @@ export default function CreateVideo({
       <br />
       <br />
 
-      <video ref={videoRef} autoPlay muted playsInline style={{ display: "none" }} />
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        style={{ display: "none" }}
+      />
 
       <canvas
         ref={canvasRef}
@@ -513,7 +610,8 @@ export default function CreateVideo({
       )}
 
       <p style={{ fontSize: 13, opacity: 0.8 }}>
-        Video records in horizontal 16:9 WebM. MP4 export will need a server conversion step later.
+        Video records in horizontal 16:9 WebM. MP4 export will need server
+        conversion later.
       </p>
     </section>
   );
