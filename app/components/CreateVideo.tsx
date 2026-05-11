@@ -1,5 +1,7 @@
 "use client";
 
+import { useRef, useState } from "react";
+
 type CreateVideoProps = {
   script: string;
   roles: string[];
@@ -13,6 +15,32 @@ export default function CreateVideo({
   myRole,
   voiceRole,
 }: CreateVideoProps) {
+  const [recording, setRecording] = useState(false);
+  const [status, setStatus] = useState("Ready.");
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  async function startVideo() {
+    setStatus("Starting video...");
+    setRecording(true);
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: true,
+    });
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+    }
+
+    setStatus("Recording started.");
+  }
+
+  function stopVideo() {
+    setRecording(false);
+    setStatus("Video stopped.");
+  }
+
   return (
     <section
       style={{
@@ -43,33 +71,54 @@ export default function CreateVideo({
         <h2>Create Video</h2>
       </div>
 
-      <p>
-        Script loaded: <strong>{script ? "Yes" : "No"}</strong>
-      </p>
+      <p>Script loaded: <strong>{script ? "Yes" : "No"}</strong></p>
+      <p>Your role: <strong>{myRole || "None"}</strong></p>
+      <p>Voice reads: <strong>{voiceRole || "None"}</strong></p>
 
-      <p>
-        Your role: <strong>{myRole || "None"}</strong>
-      </p>
+      <h3>Controls</h3>
 
-      <p>
-        Voice reads: <strong>{voiceRole || "None"}</strong>
-      </p>
+      <button>Previous Line</button>
+      <button style={{ marginLeft: 10 }}>Next Line</button>
+      <button style={{ marginLeft: 10 }}>Pause Voice</button>
+      <button style={{ marginLeft: 10 }}>Resume Voice</button>
 
-      <p>
-        Roles: <strong>{roles.length ? roles.join(", ") : "None"}</strong>
-      </p>
+      <h3>Recording details</h3>
 
-      <div
+      <input placeholder="Your Name" />
+      <input placeholder="Role Name" style={{ marginLeft: 10 }} />
+      <input placeholder="Agency" style={{ marginLeft: 10 }} />
+
+      <br /><br />
+
+      <label>
+        <input type="checkbox" /> Gray background behind video frame
+      </label>
+
+      <br /><br />
+
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
         style={{
-          height: 260,
+          width: "100%",
+          maxWidth: 520,
+          aspectRatio: "16 / 9",
           background: "#000",
           borderRadius: 12,
-          padding: 12,
-          marginTop: 16,
         }}
-      >
-        <p>Video section restored.</p>
-      </div>
+      />
+
+      <br /><br />
+
+      {!recording ? (
+        <button onClick={startVideo}>Start Video</button>
+      ) : (
+        <button onClick={stopVideo}>Stop Video</button>
+      )}
+
+      <p><strong>Status:</strong> {status}</p>
     </section>
   );
 }
