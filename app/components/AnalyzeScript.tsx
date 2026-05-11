@@ -216,9 +216,7 @@ export default function AnalyzeScript({
       <h3>Detected roles</h3>
 
       <p>
-        {roles.length > 0
-          ? roles.join(", ")
-          : "No roles detected yet."}
+        {roles.length > 0 ? roles.join(", ") : "No roles detected yet."}
       </p>
 
       <label>Your role: </label>
